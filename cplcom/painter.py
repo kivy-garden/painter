@@ -1,20 +1,24 @@
 
 from functools import partial
-from itertools import product
+from math import cos, sin, atan2, pi
+from copy import copy, deepcopy
 
 from kivy.uix.widget import Widget
 from kivy.uix.behaviors.focus import FocusBehavior
 from kivy.clock import Clock
 from kivy.metrics import dp
-from kivy.properties import OptionProperty, BooleanProperty, NumericProperty
-from kivy.graphics import Ellipse, Line, Color, Point, Mesh
+from kivy.properties import OptionProperty, BooleanProperty, NumericProperty, \
+    ListProperty
+from kivy.graphics import Ellipse, Line, Color, Point, Mesh, PushMatrix, \
+    PopMatrix, Rotate, Bezier
+from kivy.graphics.tesselator import Tesselator
 from kivy.event import EventDispatcher
 
-from kivy.garden.collider import CollideEllipse, Collide2DPoly
+from kivy.garden.collider import CollideEllipse, Collide2DPoly, CollideBezier
 
 
 def eucledian_dist(x1, y1, x2, y2):
-    return pow(pow(x1 - x2, 2) + pow(y1 - y2, 2), 0.5)
+    return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
 
 
 class PaintCanvas(FocusBehavior, Widget):
@@ -23,12 +27,12 @@ class PaintCanvas(FocusBehavior, Widget):
     :attr:`selection_shape` are the attributes that make up the state machine.
     '''
 
-    shapes = []
+    shapes = ListProperty([])
 
-    selected_shapes = []
+    selected_shapes = ListProperty([])
 
-    draw_mode = OptionProperty('polygon', options=[
-        'circle', 'ellipse', 'polygon', 'freeform', 'bezier'])
+    draw_mode = OptionProperty('freeform', options=[
+        'circle', 'ellipse', 'polygon', 'freeform', 'bezier', 'none'])
 
     current_shape = None
     '''Holds shape currently being edited. Can be a finished shape, e.g. if
@@ -57,16 +61,20 @@ class PaintCanvas(FocusBehavior, Widget):
 
     min_touch_dist = dp(10)
 
-    long_touch_delay = 1.
+    long_touch_delay = .7
 
     _long_touch_trigger = None
 
     _ctrl_down = None
 
+    line_color = 0, 1, 0, 1
+
+    line_color_edit = 1, 0, 0, 1
+
+    line_color_selector = 1, .4, 0, 1
+
     def __init__(self, **kwargs):
         super(PaintCanvas, self).__init__(**kwargs)
-        self.shapes = []
-        self.selected_shapes = []
         self._ctrl_down = set()
 
     def on_locked(self, *largs):
@@ -104,6 +112,8 @@ class PaintCanvas(FocusBehavior, Widget):
             res = shape.finish() or res
             shape.clean()
             self.current_shape = None
+            if not shape.is_valid:
+                self.remove_shape(shape)
             return res
         return False
 
@@ -117,7 +127,7 @@ class PaintCanvas(FocusBehavior, Widget):
             selection.finish()
             selection.clean()
 
-            if do_select:
+            if do_select and selection.is_valid:
                 if not self.add_selection and not self._ctrl_down:
                     self.clear_selected_shapes()
                 for shape in self.shapes:
@@ -187,6 +197,40 @@ class PaintCanvas(FocusBehavior, Widget):
         shape.remove_paint_widget()
         self.shapes.remove(shape)
 
+    def duplicate_selected_shapes(self):
+        shapes = self.selected_shapes[:]
+        self.clear_selected_shapes()
+        our_shapes = self.shapes
+        for shape in shapes:
+            shape = deepcopy(shape)
+            our_shapes.append(shape)
+            self.select_shape(shape)
+            shape.translate(dpos=(5, 5))
+        return shapes
+
+    def delete_shapes(self):
+        if self.delete_selected_point():
+            return True
+        if not self.current_shape and not self.selection_shape \
+                and self.delete_selected_shapes():
+            return True
+        return False
+
+    def select_with_touch(self, touch):
+        pos = int(touch.x), int(touch.y)
+        for s in reversed(self.selected_shapes):
+            if pos in s.inside_points:
+                self.deselect_shape(s)
+                return True
+
+        for s in reversed(self.shapes):
+            if pos in s.inside_points:
+                if not self.add_selection and not self._ctrl_down:
+                    self.clear_selected_shapes()
+                self.select_shape(s)
+                return True
+        return False
+
     def on_touch_down(self, touch):
         touch.ud['paint_touch'] = None  # stores the point the touch fell near
         touch.ud['paint_drag'] = None
@@ -199,22 +243,29 @@ class PaintCanvas(FocusBehavior, Widget):
             return super(PaintCanvas, self).on_touch_down(touch)
         touch.grab(self)
 
+        if self.select and self.draw_mode == 'none':
+            if self.select_with_touch(touch):
+                self.clear_selected_point_shape()
+                return True
+
         shape = self.current_shape or self.selection_shape \
             or self.selected_point_shape
 
         # add freeform shape if nothing is active
         res = False
         if not shape and (not self.locked or self.select) \
-                and self.draw_mode == 'freeform':
+                and self.draw_mode == 'freeform' and touch.is_double_tap:
             self.clear_selected_point_shape()
             res = True
             if self.select:
                 shape = self.selection_shape = _cls_map['freeform'](
-                    paint_widget=self)
+                    paint_widget=self, line_color=self.line_color_selector,
+                    line_color_edit=self.line_color_selector)
                 self.selection_shape.add_point(touch, source='down')
             else:
                 shape = self.current_shape = _cls_map['freeform'](
-                    paint_widget=self)
+                    paint_widget=self, line_color=self.line_color,
+                    line_color_edit=self.line_color_edit)
                 self.shapes.append(shape)
                 self.current_shape.add_point(touch, source='down')
 
@@ -235,7 +286,7 @@ class PaintCanvas(FocusBehavior, Widget):
         self._long_touch_trigger = Clock.schedule_once(
             partial(self.do_long_touch, touch, touch.x, touch.y),
             self.long_touch_delay)
-        if not touch.ud['paint_touch']:
+        if not touch.ud['paint_touch'] and not self.selected_shapes:
             touch.ud['paint_drag'] = False
         return res
 
@@ -256,13 +307,10 @@ class PaintCanvas(FocusBehavior, Widget):
             if res:
                 touch.ud['paint_long'] = True
         elif not obj_shape and self.select:
-            for s in reversed(self.shapes):
-                if (x, y) in s.inside_points:
-                    if not self.add_selection:
-                        self.clear_selected_shapes()
-                    self.select_shape(s)
-                    touch.ud['paint_long'] = True
-                    break
+            if self.select_with_touch(touch):
+                touch.ud['paint_long'] = True
+                if touch.ud['paint_drag'] is False:
+                    touch.ud['paint_drag'] = None
         elif shape in self.shapes and not obj_shape:
             self.clear_selected_point_shape()
             if shape.select_point(p):
@@ -286,26 +334,37 @@ class PaintCanvas(FocusBehavior, Widget):
             return super(PaintCanvas, self).on_touch_move(touch)
 
         if not self.collide_point(touch.x, touch.y):
+            touch.ud['paint_drag'] = False
             return touch.ud['paint_long'] or \
                 super(PaintCanvas, self).on_touch_move(touch)
 
-        # if paint_drag is not False, we have a touch in paint_touch
-        # now it could be the first move
-        shape, p = touch.ud['paint_touch']
+        if touch.ud['paint_touch'] is None:
+            shape = p = None
+        else:
+            shape, p = touch.ud['paint_touch']
+
         draw_shape = self.selection_shape or self.current_shape
         obj_shape = draw_shape or self.selected_point_shape
 
-        if shape is draw_shape and self.draw_mode == 'freeform' \
+        if shape and shape is draw_shape and self.draw_mode == 'freeform' \
                 and not self.locked:
             shape.add_point(touch, source='move')
-        elif shape is obj_shape or shape in self.shapes and not obj_shape and \
-                not self.locked and not self.select:
+        elif shape and (shape is obj_shape or shape in self.shapes and
+                        not obj_shape and not self.locked and
+                        not self.select):
             shape.move_point(touch, p)
             if touch.ud['paint_drag'] is None:
                 self.clear_selected_point_shape(exclude_point=(shape, p))
         elif not self.locked and not obj_shape and self.selected_shapes:
-            for shape in self.selected_shapes:
-                shape.translate(dpos=(touch.dx, touch.dy))
+            touch.ud['paint_touch'] = None
+            opos = int(touch.ox), int(touch.oy)
+            if not shape and touch.ud['paint_drag'] is None and \
+                    not any((opos in s.inside_points
+                             for s in self.selected_shapes)):
+                touch.ud['paint_drag'] = False
+                return False
+            for s in self.selected_shapes:
+                s.translate(dpos=(touch.dx, touch.dy))
 
         if touch.ud['paint_drag'] is None:
             touch.ud['paint_drag'] = True
@@ -332,7 +391,7 @@ class PaintCanvas(FocusBehavior, Widget):
                 self.finish_current_shape()
             return True
 
-        if touch.ud['paint_drag']:
+        if touch.ud['paint_drag'] and touch.ud['paint_touch'] is not None:
             shape, p = touch.ud['paint_touch']
             shape.move_point_done(touch, p)
 
@@ -344,29 +403,30 @@ class PaintCanvas(FocusBehavior, Widget):
         select = self.select
         if touch.is_double_tap:
             # no current shape when locked, and don't create one.
-            if self.locked and not select:
+            if self.locked and not select or self.draw_mode == 'none':
                 return False
             # either current/selection shape is finished or new one is created
             if select:
                 if not self.finish_selection_shape(True):
                     self.selection_shape = _cls_map[self.draw_mode](
-                        paint_widget=self)
+                        paint_widget=self, line_color=self.line_color_selector,
+                        line_color_edit=self.line_color_selector)
                     self.selection_shape.add_point(touch, source='up')
             else:
                 if not self.finish_current_shape():
                     s = self.current_shape = _cls_map[self.draw_mode](
-                        paint_widget=self)
+                        paint_widget=self, line_color=self.line_color,
+                        line_color_edit=self.line_color_edit)
                     self.shapes.append(s)
                     self.current_shape.add_point(touch, source='up')
             return True
 
-        if self.clear_selected_point_shape():
-            return True
-
         if shape:
-            return shape.add_point(touch, source='up')
+            res = self.clear_selected_point_shape()
+            return shape.add_point(touch, source='up') or res
 
-        if self.clear_selected_shapes():
+        res = self.clear_selected_point_shape()
+        if self.clear_selected_shapes() or res:
             return True
         if touch.grab_current is not self:
             return super(PaintCanvas, self).on_touch_up(touch)
@@ -388,15 +448,15 @@ class PaintCanvas(FocusBehavior, Widget):
             if self.clear_selected_shapes():
                 return True
         elif keycode[1] == 'delete':
-            if self.delete_selected_point():
-                return True
-            if not self.current_shape and not self.selection_shape \
-                    and self.delete_selected_shapes():
+            if self.delete_shapes():
                 return True
         elif keycode[1] == 'a' and self._ctrl_down:
             for shape in self.shapes:
                 self.select_shape(shape)
             return True
+        elif keycode[1] == 'd' and self._ctrl_down:
+            if self.duplicate_selected_shapes():
+                return True
 
         return super(PaintCanvas, self).keyboard_on_key_up(
             window, keycode)
@@ -407,6 +467,8 @@ class PaintShape(EventDispatcher):
     finished = False
 
     selected = False
+
+    is_valid = False
 
     paint_widget = None
 
@@ -432,12 +494,22 @@ class PaintShape(EventDispatcher):
 
     selected_point = None
 
-    def __init__(self, paint_widget, **kwargs):
+    def __init__(
+            self, paint_widget, line_color=(0, 1, 0, 1),
+            line_color_edit=(0, 1, 0, 1), selection_color=(1, 1, 1, .5),
+            line_width=1, **kwargs):
         super(PaintShape, self).__init__(**kwargs)
         self.paint_widget = paint_widget
+        self.line_color = line_color
+        self.line_color_edit = line_color_edit
+        self.selection_color = selection_color
+        self.line_width = line_width
         self.graphics_name = '{}-{}'.format(self.__class__.__name__, id(self))
         self.graphics_select_name = '{}-select'.format(self.graphics_name)
         self.graphics_point_select_name = '{}-point'.format(self.graphics_name)
+
+    def _add_shape(self):
+        pass
 
     def add_point(self, touch, source='down'):
         return False
@@ -516,27 +588,31 @@ class PaintShape(EventDispatcher):
         if self._inside_points is not None:
             return self._inside_points
 
-        collide = self._get_collider(self.paint_widget.size).collide_point
-        points = self._inside_points = set()
-        w, h = self.paint_widget.size
-
-        for x, y in product(range(int(w)), range(int(h))):
-            if collide(x, y):
-                points.add((x, y))
+        collider = self._get_collider(self.paint_widget.size)
+        points = self._inside_points = set(collider.get_inside_points())
         return points
+
+    def _copy(self, cls, cls_args=[], cls_attrs=[]):
+        kw = {attr: copy(getattr(self, attr)) for attr in cls_args +
+              ['paint_widget', 'line_color', 'line_color_edit',
+               'selection_color', 'line_width']}
+        obj = cls(**kw)
+        for attr in cls_attrs + ['is_valid']:
+            setattr(obj, attr, copy(getattr(self, attr)))
+        return obj
 
 
 class PaintCircle(PaintShape):
 
     center = None
 
-    ellipse = None
+    perim_ellipse_inst = None
 
-    center_point = None
+    center_point_inst = None
 
-    selection_ellipse = None
+    selection_ellipse_inst = None
 
-    ellipse_color = None
+    ellipse_color_inst = None
 
     radius = NumericProperty(dp(10))
 
@@ -544,17 +620,22 @@ class PaintCircle(PaintShape):
         super(PaintCircle, self).__init__(**kwargs)
         self.fbind('radius', self._update_radius)
 
+    def _add_shape(self):
+        x, y = self.center
+        r = self.radius
+        with self.paint_widget.canvas:
+            self.ellipse_color_inst = Color(
+                *self.line_color_edit, group=self.graphics_name)
+            self.perim_ellipse_inst = Line(
+                circle=(x, y, r), width=self.line_width,
+                group=self.graphics_name)
+
     def add_point(self, touch, source='down'):
-        if self.ellipse is None:
-            x, y = self.center = touch.x, touch.y
-            r = self.radius
-            with self.paint_widget.canvas:
-                self.ellipse_color = Color(*self.line_color_edit,
-                                           group=self.graphics_name)
-                self.ellipse = Line(
-                    circle=(x, y, r), width=self.line_width,
-                    group=self.graphics_name)
+        if self.perim_ellipse_inst is None:
+            self.center = touch.x, touch.y
+            self._add_shape()
             self._inside_points = None
+            self.is_valid = True
             return True
         return False
 
@@ -562,9 +643,9 @@ class PaintCircle(PaintShape):
         if not self.dragging:
             if point == 'center':
                 with self.paint_widget.canvas:
-                    Color(*self.ellipse_color.rgba,
+                    Color(*self.ellipse_color_inst.rgba,
                           group=self.graphics_point_select_name)
-                    self.center_point = Point(
+                    self.center_point_inst = Point(
                         points=self.center[:],
                         group=self.graphics_point_select_name,
                         pointsize=max(1, min(self.radius / 2., 2)))
@@ -585,14 +666,14 @@ class PaintCircle(PaintShape):
         if self.dragging:
             self.paint_widget.canvas.remove_group(
                 self.graphics_point_select_name)
-            self.center_point = None
+            self.center_point_inst = None
             self.dragging = False
             return True
         return False
 
     def finish(self):
         if super(PaintCircle, self).finish():
-            self.ellipse_color.rgba = self.line_color
+            self.ellipse_color_inst.rgba = self.line_color
             return True
         return False
 
@@ -603,16 +684,16 @@ class PaintCircle(PaintShape):
         r = self.radius
         with self.paint_widget.canvas:
             Color(*self.selection_color, group=self.graphics_select_name)
-            self.selection_ellipse = Ellipse(
+            self.selection_ellipse_inst = Ellipse(
                 size=(r * 2., r * 2.), pos=(x - r, y - r),
                 group=self.graphics_select_name)
-        self.ellipse.width = 2 * self.line_width
+        self.perim_ellipse_inst.width = 2 * self.line_width
         return True
 
     def deselect(self):
         if super(PaintCircle, self).deselect():
-            self.selection_ellipse = None
-            self.ellipse.width = self.line_width
+            self.selection_ellipse_inst = None
+            self.perim_ellipse_inst.width = self.line_width
             return True
         return False
 
@@ -639,12 +720,12 @@ class PaintCircle(PaintShape):
 
         r = self.radius
         self.center = x, y
-        if self.ellipse:
-            self.ellipse.circle = x, y, r
-        if self.selection_ellipse:
-            self.selection_ellipse.pos = x - r, y - r
-        if self.center_point:
-            self.center_point.points = (x, y)
+        if self.perim_ellipse_inst:
+            self.perim_ellipse_inst.circle = x, y, r
+        if self.selection_ellipse_inst:
+            self.selection_ellipse_inst.pos = x - r, y - r
+        if self.center_point_inst:
+            self.center_point_inst.points = x, y
 
         self._inside_points = None
         return True
@@ -652,11 +733,11 @@ class PaintCircle(PaintShape):
     def _update_radius(self, *largs):
         x, y = self.center
         r = self.radius
-        if self.ellipse:
-            self.ellipse.circle = x, y, r
-        if self.selection_ellipse:
-            self.selection_ellipse.size = r * 2., r * 2.
-            self.selection_ellipse.pos = x - r, y - r
+        if self.perim_ellipse_inst:
+            self.perim_ellipse_inst.circle = x, y, r
+        if self.selection_ellipse_inst:
+            self.selection_ellipse_inst.size = r * 2., r * 2.
+            self.selection_ellipse_inst.pos = x - r, y - r
 
         self._inside_points = None
 
@@ -665,14 +746,210 @@ class PaintCircle(PaintShape):
         r = self.radius
         return CollideEllipse(x=x, y=y, rx=r, ry=r)
 
+    def __deepcopy__(self, memo):
+        obj = self._copy(PaintCircle, cls_attrs=['center', 'radius'])
+        obj._add_shape()
+        obj.finish()
+        return obj
+
 
 class PaintEllipse(PaintShape):
-    pass
+
+    center = None
+
+    angle = NumericProperty(0)
+
+    rx = NumericProperty(dp(10))
+
+    ry = NumericProperty(dp(10))
+
+    _second_point = None
+
+    perim_ellipse_inst = None
+
+    perim_rotate = None
+
+    center_point_inst = None
+
+    selection_ellipse_inst = None
+
+    selection_rotate = None
+
+    ellipse_color_inst = None
+
+    def __init__(self, **kwargs):
+        super(PaintEllipse, self).__init__(**kwargs)
+        self.fbind('rx', self._update_radius)
+        self.fbind('ry', self._update_radius)
+        self.fbind('angle', self._update_radius)
+
+    def _add_shape(self):
+        x, y = self.center
+        rx, ry = self.rx, self.ry
+        with self.paint_widget.canvas:
+            self.ellipse_color_inst = Color(
+                *self.line_color_edit, group=self.graphics_name)
+            PushMatrix(group=self.graphics_name)
+            self.perim_rotate = Rotate(angle=self.angle, origin=(x, y),
+                                       group=self.graphics_name)
+            self.perim_ellipse_inst = Line(
+                ellipse=(x - rx, y - ry, 2 * rx, 2 * ry),
+                width=self.line_width, group=self.graphics_name)
+            PopMatrix(group=self.graphics_name)
+
+    def add_point(self, touch, source='down'):
+        if self.perim_ellipse_inst is None:
+            self.center = touch.x, touch.y
+            self._add_shape()
+            self._inside_points = None
+            self.is_valid = True
+            return True
+        return False
+
+    def move_point(self, touch, point):
+        if not self.dragging:
+            if point == 'center':
+                with self.paint_widget.canvas:
+                    Color(*self.ellipse_color_inst.rgba,
+                          group=self.graphics_point_select_name)
+                    self.center_point_inst = Point(
+                        points=self.center[:],
+                        group=self.graphics_point_select_name,
+                        pointsize=max(1, min(min(self.rx, self.ry) / 2., 2)))
+            self.dragging = True
+
+        self._inside_points = None
+        if point == 'center':
+            self.translate(pos=(touch.x, touch.y))
+            return True
+
+        if not self._second_point:
+            cx, cy = self.center
+            self.angle = atan2(
+                touch.y - touch.dy - cy, touch.x - touch.dx - cx) * 180. / pi
+            self._second_point = True
+
+        x = touch.dx
+        y = touch.dy
+        if self.angle:
+            angle = -self.angle * pi / 180.
+            x, y = (x * cos(angle) - y * sin(angle),
+                    x * sin(angle) + y * cos(angle))
+        self.rx = max(1, self.rx + x)
+        self.ry = max(1, self.ry + y)
+        return True
+
+    def move_point_done(self, touch, point):
+        if self.dragging:
+            self.paint_widget.canvas.remove_group(
+                self.graphics_point_select_name)
+            self.center_point_inst = None
+            self.dragging = False
+            return True
+        return False
+
+    def finish(self):
+        if super(PaintEllipse, self).finish():
+            self.ellipse_color_inst.rgba = self.line_color
+            return True
+        return False
+
+    def select(self):
+        if not super(PaintEllipse, self).select():
+            return False
+        x, y = self.center
+        rx, ry = self.rx, self.ry
+        with self.paint_widget.canvas:
+            Color(*self.selection_color, group=self.graphics_select_name)
+            PushMatrix(group=self.graphics_select_name)
+            self.selection_rotate = Rotate(angle=self.angle, origin=(x, y),
+                                           group=self.graphics_select_name)
+
+            self.selection_ellipse_inst = Ellipse(
+                size=(rx * 2., ry * 2.), pos=(x - rx, y - ry),
+                group=self.graphics_select_name)
+            PopMatrix(group=self.graphics_select_name)
+        self.perim_ellipse_inst.width = 2 * self.line_width
+        return True
+
+    def deselect(self):
+        if super(PaintEllipse, self).deselect():
+            self.selection_ellipse_inst = None
+            self.selection_rotate = None
+            self.perim_ellipse_inst.width = self.line_width
+            return True
+        return False
+
+    def closest_point(self, x, y):
+        cx, cy = self.center
+        rx, ry = self.rx, self.ry
+        collider = CollideEllipse(x=cx, y=cy, rx=rx, ry=ry, angle=self.angle)
+        dist = collider.estimate_distance(x, y)
+        center_dist = eucledian_dist(cx, cy, x, y)
+
+        if not collider.collide_point(x, y) or dist < center_dist:
+            return 'outside', dist
+        return 'center', center_dist
+
+    def translate(self, dpos=None, pos=None):
+        if dpos is not None:
+            x, y = self.center
+            dx, dy = dpos
+            x += dx
+            y += dy
+        elif pos is not None:
+            x, y = pos
+        else:
+            x, y = self.center
+
+        rx, ry = self.rx, self.ry
+        self.center = x, y
+        if self.perim_ellipse_inst:
+            self.perim_ellipse_inst.ellipse = x - rx, y - ry, 2 * rx, 2 * ry
+            self.perim_rotate.origin = x, y
+        if self.selection_ellipse_inst:
+            self.selection_ellipse_inst.pos = x - rx, y - ry
+            self.selection_rotate.origin = x, y
+        if self.center_point_inst:
+            self.center_point_inst.points = x, y
+
+        self._inside_points = None
+        return True
+
+    def _update_radius(self, *largs):
+        x, y = self.center
+        rx, ry = self.rx, self.ry
+        if self.perim_ellipse_inst:
+            self.perim_ellipse_inst.ellipse = x - rx, y - ry, 2 * rx, 2 * ry
+            self.perim_rotate.angle = self.angle
+            self.perim_rotate.origin = x, y
+        if self.selection_ellipse_inst:
+            self.selection_ellipse_inst.size = rx * 2., ry * 2.
+            self.selection_ellipse_inst.pos = x - rx, y - ry
+            self.selection_rotate.angle = self.angle
+            self.selection_rotate.origin = x, y
+
+        self._inside_points = None
+
+    def _get_collider(self, size):
+        x, y = self.center
+        rx, ry = self.rx, self.ry
+        return CollideEllipse(x=x, y=y, rx=rx, ry=ry, angle=self.angle)
+
+    def __deepcopy__(self, memo):
+        obj = self._copy(
+            PaintEllipse,
+            cls_attrs=['center', 'angle', 'rx', 'ry', '_second_point'])
+        obj._add_shape()
+        obj.finish()
+        return obj
 
 
 class PaintPolygon(PaintShape):
 
     perim_inst = None
+
+    perim_point_inst = None
 
     selection_inst = None
 
@@ -680,9 +957,11 @@ class PaintPolygon(PaintShape):
 
     perim_color_inst = None
 
+    line_type_name = 'points'
+
     def _locate_point(self, i, x, y):
         points = self.perim_inst.points
-        if len(points) > i and points[i] == x and points[i + 1] == y:
+        if len(points) > i:
             return i
 
         try:
@@ -695,28 +974,55 @@ class PaintPolygon(PaintShape):
         except ValueError:
             return 0
 
+    def _get_points(self):
+        return self.perim_inst and self.perim_inst.points
+
+    def _update_points(self, points):
+        self.perim_inst.flag_update()
+
+    def _get_perim_points(self, points):
+        return Point(points=points, group=self.graphics_name, pointsize=2)
+
+    def _add_shape(self, new_points):
+        with self.paint_widget.canvas:
+            self.perim_color_inst = Color(
+                *self.line_color_edit, group=self.graphics_name)
+
+            self.perim_inst = Line(
+                width=self.line_width, close=False,
+                group=self.graphics_name, **{self.line_type_name: []})
+            points = self._get_points()
+            points += new_points
+            self._update_points(points)
+
+            self.perim_point_inst = self._get_perim_points(new_points)
+
     def add_point(self, touch, source='down'):
         self._inside_points = None
         line = self.perim_inst
         if line is None:
-            with self.paint_widget.canvas:
-                self.perim_color_inst = Color(
-                    *self.line_color_edit, group=self.graphics_name)
-                self.perim_inst = Line(
-                    points=[touch.x, touch.y], width=self.line_width,
-                    close=False, group=self.graphics_name)
+            self._add_shape([touch.x, touch.y])
             return True
 
-        points = line.points
+        points = self._get_points()
         if not points or int(points[-2]) != (touch.x) \
                 or int(points[-1]) != (touch.y):
-            line.points = points + [touch.x, touch.y]
+            x, y = touch.x, touch.y
+            points += [x, y]
+            self._update_points(points)
+            self.perim_point_inst.points += [x, y]
+            self.perim_point_inst.flag_update()
+            if self.selection_inst is not None:
+                self._update_mesh(points)
+            if not self.is_valid and len(points) >= 6:
+                self.is_valid = True
             return True
         return False
 
     def move_point(self, touch, point):
-        line = self.perim_inst
-        points = line.points
+        points = self._get_points()
+        perim_points_inst = self.perim_point_inst
+        perim_points = perim_points_inst.points
         if not points:
             return False
 
@@ -726,26 +1032,22 @@ class PaintPolygon(PaintShape):
         if not self.dragging:
             with self.paint_widget.canvas:
                 assert not self.selection_point_inst
-                Color(*self.perim_color_inst.rgba,
-                      group=self.graphics_point_select_name)
-                self.selection_point_inst = Point(
-                    points=[points[i], points[i + 1]],
-                    group=self.graphics_point_select_name,
-                    pointsize=2)
             self.dragging = True
 
-        ppoints = self.selection_point_inst.points
-        points[i] = ppoints[0] = touch.x
-        points[i + 1] = ppoints[1] = touch.y
-        line.points = points
-        self.selection_point_inst.points = ppoints
+        points[i] = touch.x
+        points[i + 1] = touch.y
+        perim_points[i] = touch.x
+        perim_points[i + 1] = touch.y
+
+        self._update_points(points)
+        perim_points_inst.flag_update()
+
+        if self.selection_inst is not None:
+            self._update_mesh(points)
         return True
 
     def move_point_done(self, touch, point):
         if self.dragging:
-            self.paint_widget.canvas.remove_group(
-                self.graphics_point_select_name)
-            self.selection_point_inst = None
             self.dragging = False
             return True
         return False
@@ -757,24 +1059,32 @@ class PaintPolygon(PaintShape):
             return True
         return False
 
+    def _update_mesh(self, points):
+        self.paint_widget.canvas.remove_group(
+            self.graphics_select_name)
+        meshes = []
+        tess = Tesselator()
+
+        tess.add_contour(points)
+        if tess.tesselate():
+            with self.paint_widget.canvas:
+                Color(*self.selection_color, group=self.graphics_select_name)
+                for vertices, indices in tess.meshes:
+                    m = Mesh(
+                        vertices=vertices, indices=indices,
+                        mode='triangle_fan', group=self.graphics_select_name)
+                    meshes.append(m)
+
+        self.selection_inst = meshes
+
     def select(self):
         if not super(PaintPolygon, self).select():
             return False
-        points = self.perim_inst.points
-        n = len(points) // 2
-        if not n:
+        points = self._get_points()
+        if not points or not len(points) // 2:
             return True
 
-        vertices = [0, ] * (n * 4)
-        for i in range(n):
-            vertices[4 * i] = points[2 * i]
-            vertices[4 * i + 1] = points[2 * i + 1]
-
-        with self.paint_widget.canvas:
-            Color(*self.selection_color, group=self.graphics_select_name)
-            self.selection_inst = Mesh(
-                vertices=vertices, indices=range(n), mode='triangle_fan',
-                group=self.graphics_select_name)
+        self._update_mesh(points)
         self.perim_inst.width = 2 * self.line_width
         return True
 
@@ -786,7 +1096,7 @@ class PaintPolygon(PaintShape):
         return False
 
     def closest_point(self, x, y):
-        points = self.perim_inst.points
+        points = self._get_points()
         if not points:
             return ((None, None, None), 1e12)
         i = min(range(len(points) // 2),
@@ -798,7 +1108,7 @@ class PaintPolygon(PaintShape):
 
     def select_point(self, point):
         i, x, y = point
-        points = self.perim_inst.points
+        points = self._get_points()
 
         if i is None or not points:
             return False
@@ -815,7 +1125,7 @@ class PaintPolygon(PaintShape):
             self.selection_point_inst = Point(
                 points=[points[i], points[i + 1]],
                 group=self.graphics_point_select_name,
-                pointsize=2)
+                pointsize=3)
         return True
 
     def delete_selected_point(self):
@@ -824,15 +1134,23 @@ class PaintPolygon(PaintShape):
             return False
 
         i, x, y = point
-        points = self.perim_inst.points
+        points = self._get_points()
         if i is None or not points:
             return False
         i = self._locate_point(i, x, y)
         self._inside_points = None
 
         self.clear_point_selection()
+        if len(points) <= 6:
+            return True
+
         del points[i:i + 2]
-        self.perim_inst.points = points
+        del self.perim_point_inst.points[i:i + 2]
+        self._update_points(points)
+        self.perim_point_inst.flag_update()
+
+        if self.selection_inst is not None:
+            self._update_mesh(points)
         return True
 
     def clear_point_selection(self, exclude_point=None):
@@ -848,28 +1166,68 @@ class PaintPolygon(PaintShape):
         return True
 
     def translate(self, dpos):
+        self._inside_points = None
         dx, dy = dpos
-        points = self.perim_color_inst.points
+        points = self._get_points()
         if not points:
             return False
 
+        perim_points = self.perim_point_inst.points
         for i in range(len(points) // 2):
             i *= 2
             points[i] += dx
             points[i + 1] += dy
+            perim_points[i] += dx
+            perim_points[i + 1] += dy
 
-        self.perim_color_inst.points = points
+        self._update_points(points)
+        self.perim_point_inst.flag_update()
 
         if self.selection_point_inst:
             x, y = self.selection_point_inst.points
             self.selection_point_inst.points = [x + dx, y + dy]
 
+        if self.selection_inst:
+            for mesh in self.selection_inst:
+                verts = mesh.vertices
+                for i in range(len(verts) // 4):
+                    i *= 4
+                    verts[i] += dx
+                    verts[i + 1] += dy
+                mesh.vertices = verts
+
     def _get_collider(self, size):
         return Collide2DPoly(points=self.perim_inst.points, cache=True)
 
+    def __deepcopy__(self, memo):
+        obj = self._copy(self.__class__)
+        obj._add_shape(self._get_points())
+        obj.finish()
+        return obj
 
-class PaintBezier(PaintShape):
-    pass
+
+class PaintBezier(PaintPolygon):
+
+    points = None
+
+    line_type_name = 'bezier'
+
+    def __init__(self, **kwargs):
+        super(PaintBezier, self).__init__(**kwargs)
+        self.points = []
+
+    def _get_points(self):
+        return self.points
+
+    def _update_points(self, points):
+        self.perim_inst.bezier = points + points[:2]
+
+    def _update_mesh(self, points):
+        points = CollideBezier.convert_to_poly(points + points[:2])
+        super(PaintBezier, self)._update_mesh(points)
+
+    def _get_collider(self, size):
+        return CollideBezier(points=self.points + self.points[:2], cache=True)
 
 _cls_map = {
     'circle': PaintCircle, 'ellipse': PaintEllipse,
