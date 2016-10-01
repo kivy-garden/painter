@@ -8,7 +8,7 @@ from kivy.uix.behaviors.focus import FocusBehavior
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import OptionProperty, BooleanProperty, NumericProperty, \
-    ListProperty, ObjectProperty
+    ListProperty, ObjectProperty, StringProperty
 from kivy.graphics import Ellipse, Line, Color, Point, Mesh, PushMatrix, \
     PopMatrix, Rotate
 from kivy.graphics.tesselator import Tesselator
@@ -535,8 +535,22 @@ class PaintCanvas(FocusBehavior, Widget):
         return super(PaintCanvas, self).keyboard_on_key_up(
             window, keycode)
 
+    def save_shapes(self):
+        return [s.get_state() for s in self.shapes]
+
+    def restore_shapes(self, shapes):
+        for state in shapes:
+            cls = self.cls_map[state['cls']]
+            shape = cls(paint_widget=self)
+            shape.set_state(state)
+            self.add_shape(shape)
+
 
 class PaintShape(EventDispatcher):
+
+    _name_count = 0
+
+    name = StringProperty('')
 
     finished = False
 
@@ -576,6 +590,9 @@ class PaintShape(EventDispatcher):
             self, paint_widget=None, line_color=(0, 1, 0, 1),
             line_color_edit=(0, 1, 0, 1), selection_color=(1, 1, 1, .5),
             line_width=1, **kwargs):
+        if 'name' not in kwargs:
+            kwargs['name'] = 'S{}'.format(PaintShape._name_count)
+            PaintShape._name_count += 1
         super(PaintShape, self).__init__(**kwargs)
         self.paint_widget = paint_widget
         self.line_color = line_color
@@ -678,14 +695,20 @@ class PaintShape(EventDispatcher):
 
     def get_state(self, state={}):
         d = {'paint_widget': None, 'add_shape_kwargs': {}}
-        for k in ['line_color', 'line_color_edit',
+        for k in ['line_color', 'line_color_edit', 'name', '_name_count',
                   'selection_color', 'line_width', 'is_valid']:
             d[k] = getattr(self, k)
+        d['cls'] = self.__class__.__name__[:-5].lower()
         d.update(state)
         return d
 
     def set_state(self, state={}):
+        state.pop('cls', None)
+        state.pop('paint_widget', None)
         add_shape_kw = state.pop('add_shape_kwargs', {})
+        PaintShape._name_count = max(
+            PaintShape._name_count,
+            state.pop('_name_count', PaintShape._name_count))
         for k, v in state.items():
             setattr(self, k, v)
         self._add_shape(**add_shape_kw)
@@ -736,6 +759,8 @@ class PaintCircle(PaintShape):
         self.fbind('radius', self._update_radius)
 
     def _add_shape(self):
+        if not self.paint_widget:
+            return
         x, y = self.center
         r = self.radius
         with self.paint_widget.canvas:
@@ -899,6 +924,8 @@ class PaintEllipse(PaintShape):
         self.fbind('angle', self._update_radius)
 
     def _add_shape(self):
+        if not self.paint_widget:
+            return
         x, y = self.center
         rx, ry = self.rx, self.ry
         with self.paint_widget.canvas:
@@ -1097,6 +1124,15 @@ class PaintPolygon(PaintShape):
         return Point(points=points, group=self.graphics_name, pointsize=2)
 
     def _add_shape(self, points):
+        if not self.paint_widget:
+            self.perim_inst = Line(
+                width=self.line_width, close=False,
+                group=self.graphics_name, **{self.line_type_name: []})
+            pts = self._get_points()
+            pts += points
+            self._update_points(pts)
+            return
+
         with self.paint_widget.canvas:
             self.perim_color_inst = Color(
                 *self.line_color_edit, group=self.graphics_name)
@@ -1311,8 +1347,9 @@ class PaintPolygon(PaintShape):
         return Collide2DPoly(points=self.perim_inst.points, cache=True)
 
     def get_state(self, state={}):
-        d = super(PaintCircle, self).get_state(state)
+        d = super(PaintPolygon, self).get_state(state)
         d['add_shape_kwargs'] = {'points': self._get_points()}
+        return d
 
 
 class PaintBezier(PaintPolygon):
