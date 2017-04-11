@@ -1,9 +1,8 @@
 
 from functools import partial
-from math import cos, sin, atan2, pi
+from math import cos, sin, atan2, pi, sqrt
 from copy import deepcopy
 
-from kivy.uix.widget import Widget
 from kivy.uix.behaviors.focus import FocusBehavior
 from kivy.clock import Clock
 from kivy.metrics import dp
@@ -21,7 +20,7 @@ def eucledian_dist(x1, y1, x2, y2):
     return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
 
 
-class PaintCanvas(FocusBehavior, Widget):
+class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
     ''':attr:`shapes`, :attr:`selected_shapes`, :attr:`draw_mode`,
     :attr:`current_shape`, :attr:`locked`, :attr:`select`, and
     :attr:`selection_shape` are the attributes that make up the state machine.
@@ -71,6 +70,8 @@ class PaintCanvas(FocusBehavior, Widget):
 
     line_color_edit = 1, 0, 0, 1
 
+    line_color_locked = .4, .56, .36, 1
+
     line_color_selector = 1, .4, 0, 1
 
     selection_color = 1, 1, 1, .5
@@ -78,7 +79,7 @@ class PaintCanvas(FocusBehavior, Widget):
     cls_map = {}
 
     def __init__(self, **kwargs):
-        super(PaintCanvas, self).__init__(**kwargs)
+        super(PaintCanvasBehavior, self).__init__(**kwargs)
         self._ctrl_down = set()
 
     def on_locked(self, *largs):
@@ -132,8 +133,9 @@ class PaintCanvas(FocusBehavior, Widget):
             selection.clean()
 
             if do_select and selection.is_valid:
-                shapes = [shape for shape in self.shapes
-                          if shape.collide_shape(selection)]
+                shapes = [
+                    shape for shape in self.shapes if not shape.locked and
+                    shape.collide_shape(selection)]
                 if shapes:
                     if not self.multiselect and not self._ctrl_down:
                         self.clear_selected_shapes()
@@ -179,6 +181,13 @@ class PaintCanvas(FocusBehavior, Widget):
             self.remove_shape(shape)
         return shapes
 
+    def delete_all_shapes(self, keep_locked_shapes=True):
+        shapes = self.shapes[:]
+        for shape in shapes:
+            if not shape.locked or not keep_locked_shapes:
+                self.remove_shape(shape)
+        return shapes
+
     def select_shape(self, shape):
         if shape.select():
             self.selected_shapes.append(shape)
@@ -196,7 +205,7 @@ class PaintCanvas(FocusBehavior, Widget):
         self.shapes.append(shape)
         return True
 
-    def remove_shape(self, shape):
+    def clean_shape(self, shape):
         if shape is self.current_shape:
             self.finish_current_shape()
         elif shape is self.selection_shape:
@@ -204,9 +213,15 @@ class PaintCanvas(FocusBehavior, Widget):
         if shape is self.selected_point_shape:
             self.clear_selected_point_shape()
         self.deselect_shape(shape)
+
+    def remove_shape(self, shape):
+        self.clean_shape(shape)
         shape.remove_paint_widget()
-        self.shapes.remove(shape)
-        return True
+
+        if shape in self.shapes:
+            self.shapes.remove(shape)
+            return True
+        return False
 
     def duplicate_selected_shapes(self):
         shapes = self.selected_shapes[:]
@@ -226,6 +241,24 @@ class PaintCanvas(FocusBehavior, Widget):
             return True
         return False
 
+    def lock_shape(self, shape):
+        if shape.locked:
+            return False
+
+        self.clean_shape(shape)
+        return shape.lock()
+
+    def unlock_shape(self, shape):
+        if shape.locked:
+            return shape.unlock()
+        return False
+
+    def clean_shapes(self):
+        self.finish_current_shape()
+        self.finish_selection_shape()
+        self.clear_selected_point_shape()
+        self.clear_selected_shapes()
+
     def select_shape_with_touch(self, touch, deselect=True):
         pos = int(touch.x), int(touch.y)
         if deselect:
@@ -235,6 +268,9 @@ class PaintCanvas(FocusBehavior, Widget):
                     return True
 
         for s in reversed(self.shapes):
+            if s.locked:
+                continue
+
             if pos in s.inside_points:
                 if not self.multiselect and not self._ctrl_down:
                     self.clear_selected_shapes()
@@ -242,9 +278,11 @@ class PaintCanvas(FocusBehavior, Widget):
                 return True
         return False
 
-    def collide_shape(self, x, y, selected=False):
+    def collide_shape(self, x, y, selected=False, include_locked=False):
         pos = int(x), int(y)
         for s in reversed(self.selected_shapes if selected else self.shapes):
+            if not include_locked and s.locked:
+                continue
             if pos in s.inside_points:
                 return s
         return None
@@ -254,7 +292,11 @@ class PaintCanvas(FocusBehavior, Widget):
         if not shapes:
             return None
 
-        dists = [(s, s.closest_point(x, y)) for s in reversed(shapes)]
+        dists = [(s, s.closest_point(x, y)) for s in reversed(shapes)
+                 if not s.locked]
+        if not dists:
+            return None
+
         shape, (p, dist) = min(dists, key=lambda x: x[1][1])
         if dist <= self.min_touch_dist:
             return shape, p
@@ -268,10 +310,13 @@ class PaintCanvas(FocusBehavior, Widget):
         ud['paint_up'] = False
         ud['paint_used'] = False
 
-        if super(PaintCanvas, self).on_touch_down(touch):
+        if self.locked:
+            del ud['paint_used']
+            return super(PaintCanvasBehavior, self).on_touch_down(touch)
+        if super(PaintCanvasBehavior, self).on_touch_down(touch):
             return True
         if not self.collide_point(touch.x, touch.y):
-            return super(PaintCanvas, self).on_touch_down(touch)
+            return super(PaintCanvasBehavior, self).on_touch_down(touch)
         touch.grab(self)
 
         self._long_touch_trigger = Clock.schedule_once(
@@ -280,6 +325,9 @@ class PaintCanvas(FocusBehavior, Widget):
         return False
 
     def do_long_touch(self, touch, x, y, *largs):
+        touch.push()
+        touch.apply_transform_2d(self.to_widget)
+
         self._long_touch_trigger = None
         ud = touch.ud
 
@@ -321,6 +369,8 @@ class PaintCanvas(FocusBehavior, Widget):
         elif ud['paint_long']:
             ud['paint_used'] = True
 
+        touch.pop()
+
     def on_touch_move(self, touch):
         if touch.grab_current is self:
             # for move, only use normal touch, not touch outside range
@@ -328,7 +378,7 @@ class PaintCanvas(FocusBehavior, Widget):
 
         ud = touch.ud
         if 'paint_used' not in ud:
-            return super(PaintCanvas, self).on_touch_up(touch)
+            return super(PaintCanvasBehavior, self).on_touch_up(touch)
 
         if self._long_touch_trigger:
             self._long_touch_trigger.cancel()
@@ -337,11 +387,11 @@ class PaintCanvas(FocusBehavior, Widget):
         if ud['paint_drag'] is False:
             if ud['paint_used']:
                 return True
-            return super(PaintCanvas, self).on_touch_move(touch)
+            return super(PaintCanvasBehavior, self).on_touch_move(touch)
 
         if not self.collide_point(touch.x, touch.y):
             return ud['paint_used'] or \
-                super(PaintCanvas, self).on_touch_move(touch)
+                super(PaintCanvasBehavior, self).on_touch_move(touch)
 
         draw_shape = self.selection_shape or self.current_shape
 
@@ -357,12 +407,14 @@ class PaintCanvas(FocusBehavior, Widget):
                 shape = self.selection_shape = self.cls_map['freeform'](
                     paint_widget=self, line_color=self.line_color,
                     line_color_edit=self.line_color_selector,
-                    selection_color=self.selection_color)
+                    selection_color=self.selection_color,
+                    line_color_locked=self.line_color_locked)
             else:
                 shape = self.current_shape = self.cls_map['freeform'](
                     paint_widget=self, line_color=self.line_color,
                     line_color_edit=self.line_color_edit,
-                    selection_color=self.selection_color)
+                    selection_color=self.selection_color,
+                    line_color_locked=self.line_color_locked)
                 self.add_shape(shape)
             shape.add_point(pos=touch.opos, source='move')
             shape.add_point(touch, source='move')
@@ -420,7 +472,7 @@ class PaintCanvas(FocusBehavior, Widget):
             return False
         if 'paint_used' not in ud:
             if touch.grab_current is not self:
-                return super(PaintCanvas, self).on_touch_up(touch)
+                return super(PaintCanvasBehavior, self).on_touch_up(touch)
             return False
 
         ud['paint_up'] = True  # so that we don't do double on_touch_up
@@ -443,7 +495,7 @@ class PaintCanvas(FocusBehavior, Widget):
             return True
         if not self.collide_point(touch.x, touch.y):
             if touch.grab_current is not self:
-                return super(PaintCanvas, self).on_touch_up(touch)
+                return super(PaintCanvasBehavior, self).on_touch_up(touch)
             return False
 
         select = self.select
@@ -476,7 +528,8 @@ class PaintCanvas(FocusBehavior, Widget):
                 paint_widget=self, line_color=self.line_color,
                 line_color_edit=self.line_color_selector if select
                 else self.line_color_edit,
-                selection_color=self.selection_color)
+                selection_color=self.selection_color,
+                line_color_locked=self.line_color_locked)
 
             if select:
                 self.selection_shape = shape
@@ -494,7 +547,7 @@ class PaintCanvas(FocusBehavior, Widget):
         if self.clear_selected_shapes():
             return True
         if touch.grab_current is not self:
-            return super(PaintCanvas, self).on_touch_up(touch)
+            return super(PaintCanvasBehavior, self).on_touch_up(touch)
         return False
 
     def keyboard_on_key_down(self, window, keycode, text, modifiers):
@@ -509,7 +562,7 @@ class PaintCanvas(FocusBehavior, Widget):
                 shape.translate(dpos=dpos)
             return True
 
-        return super(PaintCanvas, self).keyboard_on_key_down(
+        return super(PaintCanvasBehavior, self).keyboard_on_key_down(
             window, keycode, text, modifiers)
 
     def keyboard_on_key_up(self, window, keycode):
@@ -526,24 +579,25 @@ class PaintCanvas(FocusBehavior, Widget):
                 return True
         elif keycode[1] == 'a' and self._ctrl_down:
             for shape in self.shapes:
-                self.select_shape(shape)
+                if not shape.locked:
+                    self.select_shape(shape)
             return True
         elif keycode[1] == 'd' and self._ctrl_down:
             if self.duplicate_selected_shapes():
                 return True
 
-        return super(PaintCanvas, self).keyboard_on_key_up(
+        return super(PaintCanvasBehavior, self).keyboard_on_key_up(
             window, keycode)
 
     def save_shapes(self):
         return [s.get_state() for s in self.shapes]
 
-    def restore_shapes(self, shapes):
-        for state in shapes:
-            cls = self.cls_map[state['cls']]
-            shape = cls(paint_widget=self)
-            shape.set_state(state)
-            self.add_shape(shape)
+    def restore_shape(self, state):
+        cls = self.cls_map[state['cls']]
+        shape = cls(paint_widget=self)
+        shape.set_state(state)
+        self.add_shape(shape)
+        return shape
 
 
 class PaintShape(EventDispatcher):
@@ -560,11 +614,15 @@ class PaintShape(EventDispatcher):
 
     paint_widget = None
 
+    add_to_canvas = True
+
     line_width = 1
 
     line_color = 0, 1, 0, 1
 
     line_color_edit = 1, 0, 0, 1
+
+    line_color_locked = .4, .56, .36, 1
 
     selection_color = 1, 1, 1, .5
 
@@ -582,14 +640,22 @@ class PaintShape(EventDispatcher):
 
     _centroid = None
 
+    _bounding_box = None
+
+    _area = None
+
+    _collider = None
+
     selected_point = None
+
+    locked = BooleanProperty(False)
 
     __events__ = ('on_update', )
 
     def __init__(
             self, paint_widget=None, line_color=(0, 1, 0, 1),
             line_color_edit=(0, 1, 0, 1), selection_color=(1, 1, 1, .5),
-            line_width=1, **kwargs):
+            line_width=1, line_color_locked=(.4, .56, .36, 1), **kwargs):
         if 'name' not in kwargs:
             kwargs['name'] = 'S{}'.format(PaintShape._name_count)
             PaintShape._name_count += 1
@@ -597,6 +663,7 @@ class PaintShape(EventDispatcher):
         self.paint_widget = paint_widget
         self.line_color = line_color
         self.line_color_edit = line_color_edit
+        self.line_color_locked = line_color_locked
         self.selection_color = selection_color
         self.line_width = line_width
         self.graphics_name = '{}-{}'.format(self.__class__.__name__, id(self))
@@ -616,7 +683,7 @@ class PaintShape(EventDispatcher):
         return False
 
     def remove_paint_widget(self):
-        if not self.paint_widget:
+        if not self.add_to_canvas:
             return
         self.paint_widget.canvas.remove_group(self.graphics_name)
         self.paint_widget.canvas.remove_group(self.graphics_select_name)
@@ -644,6 +711,20 @@ class PaintShape(EventDispatcher):
             return False
         self.selected = False
         self.paint_widget.canvas.remove_group(self.graphics_select_name)
+        return True
+
+    def lock(self):
+        if self.locked:
+            return False
+
+        self.locked = True
+        return True
+
+    def unlock(self):
+        if not self.locked:
+            return False
+
+        self.locked = False
         return True
 
     def closest_point(self, x, y):
@@ -677,7 +758,10 @@ class PaintShape(EventDispatcher):
 
     def on_update(self, *largs):
         self._inside_points = None
+        self._bounding_box = None
         self._centroid = None
+        self._area = None
+        self._collider = None
 
     def _get_collider(self, size):
         pass
@@ -689,16 +773,27 @@ class PaintShape(EventDispatcher):
         if self._inside_points is not None:
             return self._inside_points
 
-        collider = self._get_collider(self.paint_widget.size)
-        points = self._inside_points = set(collider.get_inside_points())
+        points = self._inside_points = set(self.collider.get_inside_points())
         return points
+
+    @property
+    def bounding_box(self):
+        if not self.is_valid:
+            return 0, 0, 0, 0
+        if self._bounding_box is not None:
+            return self._bounding_box
+
+        x1, y1, x2, y2 = self.collider.bounding_box()
+        box = self._bounding_box = x1, y1, x2 + 1, y2 + 1
+        return box
 
     def get_state(self, state={}):
         d = {'paint_widget': None, 'add_shape_kwargs': {}}
         for k in ['line_color', 'line_color_edit', 'name', '_name_count',
-                  'selection_color', 'line_width', 'is_valid']:
+                  'selection_color', 'line_width', 'is_valid', 'locked',
+                  'line_color_locked']:
             d[k] = getattr(self, k)
-        d['cls'] = self.__class__.__name__[:-5].lower()
+        d['cls'] = self.__class__.__name__[5:].lower()
         d.update(state)
         return d
 
@@ -708,11 +803,12 @@ class PaintShape(EventDispatcher):
         add_shape_kw = state.pop('add_shape_kwargs', {})
         PaintShape._name_count = max(
             PaintShape._name_count,
-            state.pop('_name_count', PaintShape._name_count))
+            state.pop('_name_count', PaintShape._name_count) + 1)
         for k, v in state.items():
             setattr(self, k, v)
         self._add_shape(**add_shape_kw)
         self.finish()
+        self.dispatch('on_update')
 
     def __deepcopy__(self, memo):
         obj = self.__class__()
@@ -726,18 +822,38 @@ class PaintShape(EventDispatcher):
         if self._centroid is not None:
             return self._centroid
 
-        xc = yc = 0
-        points = self.inside_points
-        n = float(len(points))
-
-        for x, y in points:
-            xc += x
-            yc += y
-
-        xc /= n
-        yc /= n
-        self._centroid = xc, yc
+        self._centroid = xc, yc = self.collider.get_centroid()
         return xc, yc
+
+    @property
+    def area(self):
+        if not self.is_valid:
+            return 0
+        if self._area is not None:
+            return self._area
+
+        self._area = area = float(self.collider.get_area())
+        return area
+
+    @property
+    def collider(self):
+        if not self.is_valid:
+            return None
+        if self._collider is not None:
+            return self._collider
+
+        self._collider = collider = self._get_collider(self.paint_widget.size)
+        return collider
+
+    def add_shape_instructions(self, color, name, canvas):
+        pass
+
+    def set_area(self, area):
+        scale = 1 / sqrt(self.area / float(area))
+        self.rescale(scale)
+
+    def rescale(self, scale):
+        pass
 
 
 class PaintCircle(PaintShape):
@@ -759,7 +875,7 @@ class PaintCircle(PaintShape):
         self.fbind('radius', self._update_radius)
 
     def _add_shape(self):
-        if not self.paint_widget:
+        if not self.add_to_canvas:
             return
         x, y = self.center
         r = self.radius
@@ -774,8 +890,8 @@ class PaintCircle(PaintShape):
         if self.perim_ellipse_inst is None:
             self.center = pos or (touch.x, touch.y)
             self._add_shape()
-            self.dispatch('on_update')
             self.is_valid = True
+            self.dispatch('on_update')
             return True
         return False
 
@@ -813,20 +929,38 @@ class PaintCircle(PaintShape):
 
     def finish(self):
         if super(PaintCircle, self).finish():
+            if self.add_to_canvas:
+                self.ellipse_color_inst.rgba = self.line_color
+            return True
+        return False
+
+    def lock(self):
+        if super(PaintCircle, self).lock():
+            self.ellipse_color_inst.rgba = self.line_color_locked
+            return True
+        return False
+
+    def unlock(self):
+        if super(PaintCircle, self).unlock():
             self.ellipse_color_inst.rgba = self.line_color
             return True
         return False
 
+    def add_shape_instructions(self, color, name, canvas):
+        x, y = self.center
+        r = self.radius
+        with canvas:
+            c = Color(*color, group=name)
+            e = Ellipse(size=(r * 2., r * 2.), pos=(x - r, y - r),
+                           group=name)
+        return c, e
+
     def select(self):
         if not super(PaintCircle, self).select():
             return False
-        x, y = self.center
-        r = self.radius
-        with self.paint_widget.canvas:
-            Color(*self.selection_color, group=self.graphics_select_name)
-            self.selection_ellipse_inst = Ellipse(
-                size=(r * 2., r * 2.), pos=(x - r, y - r),
-                group=self.graphics_select_name)
+        _, self.selection_ellipse_inst = self.add_shape_instructions(
+            self.selection_color, self.graphics_select_name,
+            self.paint_widget.canvas)
         self.perim_ellipse_inst.width = 2 * self.line_width
         return True
 
@@ -866,6 +1000,18 @@ class PaintCircle(PaintShape):
             self.selection_ellipse_inst.pos = x - r, y - r
         if self.center_point_inst:
             self.center_point_inst.points = x, y
+
+        self.dispatch('on_update')
+        return True
+
+    def rescale(self, scale):
+        x, y = self.center
+        r = self.radius = self.radius * scale
+
+        if self.perim_ellipse_inst:
+            self.perim_ellipse_inst.circle = x, y, r
+        if self.selection_ellipse_inst:
+            self.selection_ellipse_inst.pos = x - r, y - r
 
         self.dispatch('on_update')
         return True
@@ -924,7 +1070,7 @@ class PaintEllipse(PaintShape):
         self.fbind('angle', self._update_radius)
 
     def _add_shape(self):
-        if not self.paint_widget:
+        if not self.add_to_canvas:
             return
         x, y = self.center
         rx, ry = self.rx, self.ry
@@ -943,8 +1089,8 @@ class PaintEllipse(PaintShape):
         if self.perim_ellipse_inst is None:
             self.center = pos or (touch.x, touch.y)
             self._add_shape()
-            self.dispatch('on_update')
             self.is_valid = True
+            self.dispatch('on_update')
             return True
         return False
 
@@ -960,9 +1106,9 @@ class PaintEllipse(PaintShape):
                         pointsize=max(1, min(min(self.rx, self.ry) / 2., 2)))
             self.dragging = True
 
-        self.dispatch('on_update')
         if point == 'center':
             self.translate(pos=(touch.x, touch.y))
+            self.dispatch('on_update')
             return True
 
         if not self._second_point:
@@ -979,6 +1125,7 @@ class PaintEllipse(PaintShape):
                     x * sin(angle) + y * cos(angle))
         self.rx = max(1, self.rx + x)
         self.ry = max(1, self.ry + y)
+        self.dispatch('on_update')
         return True
 
     def move_point_done(self, touch, point):
@@ -992,25 +1139,42 @@ class PaintEllipse(PaintShape):
 
     def finish(self):
         if super(PaintEllipse, self).finish():
+            if self.add_to_canvas:
+                self.ellipse_color_inst.rgba = self.line_color
+            return True
+        return False
+
+    def lock(self):
+        if super(PaintEllipse, self).lock():
+            self.ellipse_color_inst.rgba = self.line_color_locked
+            return True
+        return False
+
+    def unlock(self):
+        if super(PaintEllipse, self).unlock():
             self.ellipse_color_inst.rgba = self.line_color
             return True
         return False
 
+    def add_shape_instructions(self, color, name, canvas):
+        x, y = self.center
+        rx, ry = self.rx, self.ry
+        with canvas:
+            c = Color(*color, group=name)
+            p1 = PushMatrix(group=name)
+            r = Rotate(angle=self.angle, origin=(x, y), group=name)
+            e = Ellipse(
+                size=(rx * 2., ry * 2.), pos=(x - rx, y - ry), group=name)
+            p2 = PopMatrix(group=name)
+        return c, p1, r, e, p2
+
     def select(self):
         if not super(PaintEllipse, self).select():
             return False
-        x, y = self.center
-        rx, ry = self.rx, self.ry
-        with self.paint_widget.canvas:
-            Color(*self.selection_color, group=self.graphics_select_name)
-            PushMatrix(group=self.graphics_select_name)
-            self.selection_rotate = Rotate(angle=self.angle, origin=(x, y),
-                                           group=self.graphics_select_name)
-
-            self.selection_ellipse_inst = Ellipse(
-                size=(rx * 2., ry * 2.), pos=(x - rx, y - ry),
-                group=self.graphics_select_name)
-            PopMatrix(group=self.graphics_select_name)
+        _, _, self.selection_rotate, self.selection_ellipse_inst, _ = \
+            self.add_shape_instructions(
+                self.selection_color, self.graphics_select_name,
+                self.paint_widget.canvas)
         self.perim_ellipse_inst.width = 2 * self.line_width
         return True
 
@@ -1058,6 +1222,18 @@ class PaintEllipse(PaintShape):
         self.dispatch('on_update')
         return True
 
+    def rescale(self, scale):
+        x, y = self.center
+        rx, ry = self.rx, self.ry = self.rx * scale, self.ry * scale
+
+        if self.perim_ellipse_inst:
+            self.perim_ellipse_inst.ellipse = x - rx, y - ry, 2 * rx, 2 * ry
+        if self.selection_ellipse_inst:
+            self.selection_ellipse_inst.pos = x - rx, y - ry
+
+        self.dispatch('on_update')
+        return True
+
     def _update_radius(self, *largs):
         x, y = self.center
         rx, ry = self.rx, self.ry
@@ -1079,7 +1255,7 @@ class PaintEllipse(PaintShape):
         return CollideEllipse(x=x, y=y, rx=rx, ry=ry, angle=self.angle)
 
     def get_state(self, state={}):
-        d = super(PaintCircle, self).get_state(state)
+        d = super(PaintEllipse, self).get_state(state)
         for k in ['center', 'angle', 'rx', 'ry', '_second_point']:
             d[k] = getattr(self, k)
         return d
@@ -1124,7 +1300,7 @@ class PaintPolygon(PaintShape):
         return Point(points=points, group=self.graphics_name, pointsize=2)
 
     def _add_shape(self, points):
-        if not self.paint_widget:
+        if not self.add_to_canvas:
             self.perim_inst = Line(
                 width=self.line_width, close=False,
                 group=self.graphics_name, **{self.line_type_name: []})
@@ -1147,11 +1323,11 @@ class PaintPolygon(PaintShape):
             self.perim_point_inst = self._get_perim_points(points)
 
     def add_point(self, touch=None, pos=None, source='down'):
-        self.dispatch('on_update')
         line = self.perim_inst
         x, y = pos or (touch.x, touch.y)
         if line is None:
             self._add_shape([x, y])
+            self.dispatch('on_update')
             return True
 
         points = self._get_points()
@@ -1165,7 +1341,9 @@ class PaintPolygon(PaintShape):
                 self._update_mesh(points)
             if not self.is_valid and len(points) >= 6:
                 self.is_valid = True
+            self.dispatch('on_update')
             return True
+        self.dispatch('on_update')
         return False
 
     def move_point(self, touch, point):
@@ -1175,7 +1353,6 @@ class PaintPolygon(PaintShape):
         if not points:
             return False
 
-        self.dispatch('on_update')
         i = self._locate_point(*point)
 
         if not self.dragging:
@@ -1191,6 +1368,7 @@ class PaintPolygon(PaintShape):
 
         if self.selection_inst is not None:
             self._update_mesh(points)
+        self.dispatch('on_update')
         return True
 
     def move_point_done(self, touch, point):
@@ -1201,12 +1379,49 @@ class PaintPolygon(PaintShape):
 
     def finish(self):
         if super(PaintPolygon, self).finish():
-            self.perim_color_inst.rgba = self.line_color
-            self.perim_inst.close = True
+            if self.add_to_canvas:
+                self.perim_color_inst.rgba = self.line_color
+                self.perim_inst.close = True
             return True
         return False
 
+    def lock(self):
+        if super(PaintPolygon, self).lock():
+            self.perim_color_inst.rgba = self.line_color_locked
+            return True
+        return False
+
+    def unlock(self):
+        if super(PaintPolygon, self).unlock():
+            self.perim_color_inst.rgba = self.line_color
+            return True
+        return False
+
+    def _get_poly_points(self, points):
+        return points
+
+    def add_shape_instructions(self, color, name, canvas):
+        points = self._get_points()
+        if not points or not len(points) // 2:
+            return []
+        points = self._get_poly_points(points)
+
+        meshes = []
+        tess = Tesselator()
+
+        tess.add_contour(points)
+        if tess.tesselate():
+            with canvas:
+                meshes.append(Color(*color, group=name))
+                for vertices, indices in tess.meshes:
+                    m = Mesh(
+                        vertices=vertices, indices=indices,
+                        mode='triangle_fan', group=name)
+                    meshes.append(m)
+        return meshes
+
     def _update_mesh(self, points):
+        points = self._get_poly_points(points)
         self.paint_widget.canvas.remove_group(
             self.graphics_select_name)
         meshes = []
@@ -1289,6 +1504,7 @@ class PaintPolygon(PaintShape):
 
         self.clear_point_selection()
         if len(points) <= 6:
+            self.dispatch('on_update')
             return True
 
         del points[i:i + 2]
@@ -1298,6 +1514,7 @@ class PaintPolygon(PaintShape):
 
         if self.selection_inst is not None:
             self._update_mesh(points)
+        self.dispatch('on_update')
         return True
 
     def clear_point_selection(self, exclude_point=None):
@@ -1313,7 +1530,6 @@ class PaintPolygon(PaintShape):
         return True
 
     def translate(self, dpos):
-        self.dispatch('on_update')
         dx, dy = dpos
         points = self._get_points()
         if not points:
@@ -1342,6 +1558,40 @@ class PaintPolygon(PaintShape):
                     verts[i] += dx
                     verts[i + 1] += dy
                 mesh.vertices = verts
+        self.dispatch('on_update')
+        return True
+
+    def rescale(self, scale):
+        points = self._get_points()
+        if not points:
+            return False
+
+        cx, cy = self.centroid
+        perim_points = self.perim_point_inst.points
+        for i in range(len(points) // 2):
+            i *= 2
+            perim_points[i] = points[i] = (points[i] - cx) * scale + cx
+            perim_points[i + 1] = points[i + 1] = \
+                (points[i + 1] - cy) * scale + cy
+
+        self._update_points(points)
+        self.perim_point_inst.flag_update()
+
+        if self.selection_point_inst:
+            x, y = self.selection_point_inst.points
+            self.selection_point_inst.points = [
+                (x - cx) * scale + cx, (y - cy) * scale + cy]
+
+        if self.selection_inst:
+            for mesh in self.selection_inst:
+                verts = mesh.vertices
+                for i in range(len(verts) // 4):
+                    i *= 4
+                    verts[i] = (verts[i] - cx) * scale + cx
+                    verts[i + 1] = (verts[i + 1] - cy) * scale + cy
+                mesh.vertices = verts
+        self.dispatch('on_update')
+        return True
 
     def _get_collider(self, size):
         return Collide2DPoly(points=self.perim_inst.points, cache=True)
@@ -1368,14 +1618,13 @@ class PaintBezier(PaintPolygon):
     def _update_points(self, points):
         self.perim_inst.bezier = points + points[:2]
 
-    def _update_mesh(self, points):
-        points = CollideBezier.convert_to_poly(points + points[:2])
-        super(PaintBezier, self)._update_mesh(points)
+    def _get_poly_points(self, points):
+        return CollideBezier.convert_to_poly(points + points[:2])
 
     def _get_collider(self, size):
         return CollideBezier(points=self.points + self.points[:2], cache=True)
 
-PaintCanvas.cls_map = {
+PaintCanvasBehavior.cls_map = {
     'circle': PaintCircle, 'ellipse': PaintEllipse,
     'polygon': PaintPolygon, 'freeform': PaintPolygon,
     'bezier': PaintBezier
