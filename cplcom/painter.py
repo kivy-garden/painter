@@ -227,7 +227,11 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
         shapes = self.selected_shapes[:]
         self.clear_selected_shapes()
         for shape in shapes:
-            shape = deepcopy(shape)
+            state = shape.get_state()
+            cls = self.cls_map[state['cls']]
+            shape = cls(paint_widget=self)
+            shape.set_state(state)
+
             self.add_shape(shape)
             self.select_shape(shape)
             shape.translate(dpos=(5, 5))
