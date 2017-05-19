@@ -791,15 +791,19 @@ class PaintShape(EventDispatcher):
         box = self._bounding_box = x1, y1, x2 + 1, y2 + 1
         return box
 
-    def get_state(self, state={}):
+    def get_state(self, state=None):
         d = {'paint_widget': None, 'add_shape_kwargs': {}}
         for k in ['line_color', 'line_color_edit', 'name', '_name_count',
                   'selection_color', 'line_width', 'is_valid', 'locked',
                   'line_color_locked']:
             d[k] = getattr(self, k)
         d['cls'] = self.__class__.__name__[5:].lower()
-        d.update(state)
-        return d
+
+        if state is None:
+            state = d
+        else:
+            state.update(d)
+        return state
 
     def set_state(self, state={}):
         state.pop('cls', None)
@@ -1036,7 +1040,7 @@ class PaintCircle(PaintShape):
         r = self.radius
         return CollideEllipse(x=x, y=y, rx=r, ry=r)
 
-    def get_state(self, state={}):
+    def get_state(self, state=None):
         d = super(PaintCircle, self).get_state(state)
         for k in ['center', 'radius']:
             d[k] = getattr(self, k)
@@ -1258,7 +1262,7 @@ class PaintEllipse(PaintShape):
         rx, ry = self.rx, self.ry
         return CollideEllipse(x=x, y=y, rx=rx, ry=ry, angle=self.angle)
 
-    def get_state(self, state={}):
+    def get_state(self, state=None):
         d = super(PaintEllipse, self).get_state(state)
         for k in ['center', 'angle', 'rx', 'ry', '_second_point']:
             d[k] = getattr(self, k)
@@ -1600,7 +1604,7 @@ class PaintPolygon(PaintShape):
     def _get_collider(self, size):
         return Collide2DPoly(points=self.perim_inst.points, cache=True)
 
-    def get_state(self, state={}):
+    def get_state(self, state=None):
         d = super(PaintPolygon, self).get_state(state)
         d['add_shape_kwargs'] = {'points': self._get_points()}
         return d
