@@ -76,7 +76,7 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
 
     selection_color = 1, 1, 1, .5
 
-    cls_map = {}
+    shape_cls_map = {}
 
     def __init__(self, **kwargs):
         super(PaintCanvasBehavior, self).__init__(**kwargs)
@@ -228,7 +228,7 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
         self.clear_selected_shapes()
         for shape in shapes:
             state = shape.get_state()
-            cls = self.cls_map[state['cls']]
+            cls = self.shape_cls_map[state['cls']]
             shape = cls(paint_widget=self)
             shape.set_state(state)
 
@@ -408,13 +408,13 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
                 self.clear_selected_shapes()
 
             if self.select:
-                shape = self.selection_shape = self.cls_map['freeform'](
+                shape = self.selection_shape = self.shape_cls_map['freeform'](
                     paint_widget=self, line_color=self.line_color,
                     line_color_edit=self.line_color_selector,
                     selection_color=self.selection_color,
                     line_color_locked=self.line_color_locked)
             else:
-                shape = self.current_shape = self.cls_map['freeform'](
+                shape = self.current_shape = self.shape_cls_map['freeform'](
                     paint_widget=self, line_color=self.line_color,
                     line_color_edit=self.line_color_edit,
                     selection_color=self.selection_color,
@@ -528,7 +528,7 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
                     if s and self.deselect_shape(s):
                         return True
 
-            shape = self.cls_map[draw_mode](
+            shape = self.shape_cls_map[draw_mode](
                 paint_widget=self, line_color=self.line_color,
                 line_color_edit=self.line_color_selector if select
                 else self.line_color_edit,
@@ -597,7 +597,7 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
         return [s.get_state() for s in self.shapes]
 
     def restore_shape(self, state):
-        cls = self.cls_map[state['cls']]
+        cls = self.shape_cls_map[state['cls']]
         shape = cls(paint_widget=self)
         shape.set_state(state)
         self.add_shape(shape)
@@ -1632,7 +1632,7 @@ class PaintBezier(PaintPolygon):
     def _get_collider(self, size):
         return CollideBezier(points=self.points + self.points[:2], cache=True)
 
-PaintCanvasBehavior.cls_map = {
+PaintCanvasBehavior.shape_cls_map = {
     'circle': PaintCircle, 'ellipse': PaintEllipse,
     'polygon': PaintPolygon, 'freeform': PaintPolygon,
     'bezier': PaintBezier
