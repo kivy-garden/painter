@@ -249,6 +249,16 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
             shape.translate(dpos=(5, 5))
         return shapes
 
+    def duplicate_shape(self, shape):
+        state = shape.get_state()
+        cls = self.shape_cls_map[state['cls']]
+        shape = cls(paint_widget=self)
+        shape.set_state(state)
+
+        self.add_shape(shape)
+        shape.translate(dpos=(5, 5))
+        return shape
+
     def delete_shapes(self):
         if self.delete_selected_point():
             return True
