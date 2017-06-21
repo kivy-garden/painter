@@ -1558,7 +1558,7 @@ class PaintPolygon(PaintShape):
 
         if point[0] is None or exclude_point == point:
             return False
-        self._instruction_groups.remove_group(self.graphics_point_select_name)
+        self._instruction_group.remove_group(self.graphics_point_select_name)
         self.selection_point_inst = None
         return True
 
