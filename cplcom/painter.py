@@ -1,7 +1,6 @@
 
 from functools import partial
 from math import cos, sin, atan2, pi, sqrt
-from copy import deepcopy
 
 from kivy.uix.behaviors.focus import FocusBehavior
 from kivy.clock import Clock
@@ -16,7 +15,7 @@ from kivy.event import EventDispatcher
 from kivy.garden.collider import CollideEllipse, Collide2DPoly, CollideBezier
 
 
-def eucledian_dist(x1, y1, x2, y2):
+def euclidean_dist(x1, y1, x2, y2):
     return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
 
 
@@ -402,6 +401,9 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
             # for move, only use normal touch, not touch outside range
             return
 
+        if touch.grab_current is not None:
+            return False
+
         ud = touch.ud
         if 'paint_used' not in ud:
             return super(PaintCanvasBehavior, self).on_touch_up(touch)
@@ -496,6 +498,9 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
         ud = touch.ud
         if touch.grab_current is self and ud['paint_up']:
             return False
+        if touch.grab_current is not None and touch.grab_current is not self:
+            return False
+
         if 'paint_used' not in ud:
             if touch.grab_current is not self:
                 return super(PaintCanvasBehavior, self).on_touch_up(touch)
@@ -847,10 +852,20 @@ class PaintShape(EventDispatcher):
         PaintShape._name_count = max(
             PaintShape._name_count,
             state.pop('_name_count', PaintShape._name_count) + 1)
+
+        lock = None
         for k, v in state.items():
+            if k == 'locked':
+                lock = bool(v)
+                continue
             setattr(self, k, v)
         self._add_shape(**add_shape_kw)
         self.finish()
+
+        if lock is True:
+            self.lock()
+        elif lock is False:
+            self.unlock()
         self.dispatch('on_update')
 
     def __deepcopy__(self, memo):
@@ -958,8 +973,8 @@ class PaintCircle(PaintShape):
             self.translate(pos=(touch.x, touch.y))
         else:
             x, y = self.center
-            ndist = eucledian_dist(x, y, touch.x, touch.y)
-            odist = eucledian_dist(x, y, touch.x - touch.dx,
+            ndist = euclidean_dist(x, y, touch.x, touch.y)
+            odist = euclidean_dist(x, y, touch.x - touch.dx,
                                    touch.y - touch.dy)
             self.radius = max(1, self.radius + ndist - odist)
         self.dispatch('on_update')
@@ -1019,7 +1034,7 @@ class PaintCircle(PaintShape):
         return False
 
     def closest_point(self, x, y):
-        d = eucledian_dist(x, y, *self.center)
+        d = euclidean_dist(x, y, *self.center)
         r = self.radius
         if d <= r / 2.:
             return 'center', d
@@ -1246,7 +1261,7 @@ class PaintEllipse(PaintShape):
         rx, ry = self.rx, self.ry
         collider = CollideEllipse(x=cx, y=cy, rx=rx, ry=ry, angle=self.angle)
         dist = collider.estimate_distance(x, y)
-        center_dist = eucledian_dist(cx, cy, x, y)
+        center_dist = euclidean_dist(cx, cy, x, y)
 
         if not collider.collide_point(x, y) or dist < center_dist:
             return 'outside', dist
@@ -1505,11 +1520,11 @@ class PaintPolygon(PaintShape):
         if not points:
             return ((None, None, None), 1e12)
         i = min(range(len(points) // 2),
-                key=lambda i: eucledian_dist(x, y, points[2 * i],
+                key=lambda i: euclidean_dist(x, y, points[2 * i],
                                              points[2 * i + 1]))
         i *= 2
         px, py = points[i], points[i + 1]
-        return ((i, px, py), eucledian_dist(x, y, px, py))
+        return ((i, px, py), euclidean_dist(x, y, px, py))
 
     def select_point(self, point):
         i, x, y = point
@@ -1568,7 +1583,7 @@ class PaintPolygon(PaintShape):
 
         if point[0] is None or exclude_point == point:
             return False
-        self._instruction_groups.remove_group(self.graphics_point_select_name)
+        self._instruction_group.remove_group(self.graphics_point_select_name)
         self.selection_point_inst = None
         return True
 
@@ -1666,6 +1681,7 @@ class PaintBezier(PaintPolygon):
 
     def _get_collider(self, size):
         return CollideBezier(points=self.points + self.points[:2], cache=True)
+
 
 PaintCanvasBehavior.shape_cls_map = {
     'circle': PaintCircle, 'ellipse': PaintEllipse,
