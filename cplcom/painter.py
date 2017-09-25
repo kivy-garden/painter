@@ -288,7 +288,7 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
         pos = int(touch.x), int(touch.y)
         if deselect:
             for s in reversed(self.selected_shapes):
-                if pos in s.inside_points:
+                if s.collide_point(*pos):
                     self.deselect_shape(s)
                     return True
 
@@ -296,7 +296,7 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
             if s.locked:
                 continue
 
-            if pos in s.inside_points:
+            if s.collide_point(*pos):
                 if not self.multiselect and not self._ctrl_down:
                     self.clear_selected_shapes()
                 self.select_shape(s)
@@ -308,7 +308,7 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
         for s in reversed(self.selected_shapes if selected else self.shapes):
             if not include_locked and s.locked:
                 continue
-            if pos in s.inside_points:
+            if s.collide_point(*pos):
                 return s
         return None
 
@@ -798,6 +798,12 @@ class PaintShape(EventDispatcher):
         for p in points_a:
             if p in points_b:
                 return True
+        return False
+
+    def collide_point(self, x, y):
+        x1, y1, x2, y2 = self.bounding_box
+        if x1 <= x <= x2 and y1 < y < y2:
+            return (int(x), int(y)) in self.inside_points
         return False
 
     def on_update(self, *largs):
