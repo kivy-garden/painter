@@ -480,7 +480,7 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
             if (ud['paint_drag'] is None and
                     not self.select_shape_with_touch(touch, deselect=False) and
                     self.selected_shapes and
-                    not any((opos in s.inside_points
+                    not any((s.collide_point(*opos)
                              for s in self.selected_shapes))):
                 ud['paint_drag'] = False
                 return False
@@ -730,6 +730,7 @@ class PaintShape(EventDispatcher):
         if self.finished:
             return False
         self.finished = True
+        self.dispatch('on_update')
         return True
 
     def clean(self):
@@ -803,7 +804,7 @@ class PaintShape(EventDispatcher):
     def collide_point(self, x, y):
         x1, y1, x2, y2 = self.bounding_box
         if x1 <= x <= x2 and y1 < y < y2:
-            return (int(x), int(y)) in self.inside_points
+            return self.collider.collide_point(x, y)
         return False
 
     def on_update(self, *largs):
