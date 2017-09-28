@@ -923,7 +923,7 @@ class PaintShape(EventDispatcher):
 
 class PaintCircle(PaintShape):
 
-    center = None
+    center = [0, 0]
 
     perim_ellipse_inst = None
 
@@ -1110,7 +1110,7 @@ class PaintCircle(PaintShape):
 
 class PaintEllipse(PaintShape):
 
-    center = None
+    center = [0, 0]
 
     angle = NumericProperty(0)
 
