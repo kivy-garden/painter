@@ -475,7 +475,7 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
 
         if shape:
             shape.move_point(touch, p)
-        elif not self.locked:
+        elif not self.locked and not draw_shape:
             opos = int(touch.ox), int(touch.oy)
             if (ud['paint_drag'] is None and
                     not self.select_shape_with_touch(touch, deselect=False) and
@@ -1005,13 +1005,15 @@ class PaintCircle(PaintShape):
 
     def lock(self):
         if super(PaintCircle, self).lock():
-            self.ellipse_color_inst.rgba = self.line_color_locked
+            if self.add_to_canvas:
+                self.ellipse_color_inst.rgba = self.line_color_locked
             return True
         return False
 
     def unlock(self):
         if super(PaintCircle, self).unlock():
-            self.ellipse_color_inst.rgba = self.line_color
+            if self.add_to_canvas:
+                self.ellipse_color_inst.rgba = self.line_color
             return True
         return False
 
@@ -1220,13 +1222,15 @@ class PaintEllipse(PaintShape):
 
     def lock(self):
         if super(PaintEllipse, self).lock():
-            self.ellipse_color_inst.rgba = self.line_color_locked
+            if self.add_to_canvas:
+                self.ellipse_color_inst.rgba = self.line_color_locked
             return True
         return False
 
     def unlock(self):
         if super(PaintEllipse, self).unlock():
-            self.ellipse_color_inst.rgba = self.line_color
+            if self.add_to_canvas:
+                self.ellipse_color_inst.rgba = self.line_color
             return True
         return False
 
@@ -1467,13 +1471,15 @@ class PaintPolygon(PaintShape):
 
     def lock(self):
         if super(PaintPolygon, self).lock():
-            self.perim_color_inst.rgba = self.line_color_locked
+            if self.add_to_canvas:
+                self.perim_color_inst.rgba = self.line_color_locked
             return True
         return False
 
     def unlock(self):
         if super(PaintPolygon, self).unlock():
-            self.perim_color_inst.rgba = self.line_color
+            if self.add_to_canvas:
+                self.perim_color_inst.rgba = self.line_color
             return True
         return False
 
