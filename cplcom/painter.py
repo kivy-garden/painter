@@ -77,6 +77,8 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
 
     shape_cls_map = {}
 
+    add_shapes_to_canvas = False
+
     def __init__(self, **kwargs):
         super(PaintCanvasBehavior, self).__init__(**kwargs)
         self._ctrl_down = set()
@@ -645,8 +647,6 @@ class PaintShape(EventDispatcher):
 
     paint_widget = None
 
-    add_to_canvas = True
-
     line_width = 1
 
     line_color = 0, 1, 0, 1
@@ -704,7 +704,7 @@ class PaintShape(EventDispatcher):
         self.graphics_point_select_name = '{}-point'.format(self.graphics_name)
 
     def _add_shape(self):
-        if not self.add_to_canvas:
+        if not self.paint_widget.add_shapes_to_canvas:
             return False
         with self.paint_widget.canvas:
             self._instruction_group = InstructionGroup()
@@ -720,7 +720,7 @@ class PaintShape(EventDispatcher):
         return False
 
     def remove_paint_widget(self):
-        if not self.add_to_canvas:
+        if not self.paint_widget.add_shapes_to_canvas:
             return
         self._instruction_group.remove_group(self.graphics_name)
         self._instruction_group.remove_group(self.graphics_select_name)
@@ -781,7 +781,7 @@ class PaintShape(EventDispatcher):
         return False
 
     def move_to_top(self):
-        if not self.add_to_canvas:
+        if not self.paint_widget.add_shapes_to_canvas:
             return False
         self.paint_widget.canvas.remove(self._instruction_group)
         self.paint_widget.canvas.add(self._instruction_group)
@@ -998,21 +998,21 @@ class PaintCircle(PaintShape):
 
     def finish(self):
         if super(PaintCircle, self).finish():
-            if self.add_to_canvas:
+            if self.paint_widget.add_shapes_to_canvas:
                 self.ellipse_color_inst.rgba = self.line_color
             return True
         return False
 
     def lock(self):
         if super(PaintCircle, self).lock():
-            if self.add_to_canvas:
+            if self.paint_widget.add_shapes_to_canvas:
                 self.ellipse_color_inst.rgba = self.line_color_locked
             return True
         return False
 
     def unlock(self):
         if super(PaintCircle, self).unlock():
-            if self.add_to_canvas:
+            if self.paint_widget.add_shapes_to_canvas:
                 self.ellipse_color_inst.rgba = self.line_color
             return True
         return False
@@ -1215,21 +1215,21 @@ class PaintEllipse(PaintShape):
 
     def finish(self):
         if super(PaintEllipse, self).finish():
-            if self.add_to_canvas:
+            if self.paint_widget.add_shapes_to_canvas:
                 self.ellipse_color_inst.rgba = self.line_color
             return True
         return False
 
     def lock(self):
         if super(PaintEllipse, self).lock():
-            if self.add_to_canvas:
+            if self.paint_widget.add_shapes_to_canvas:
                 self.ellipse_color_inst.rgba = self.line_color_locked
             return True
         return False
 
     def unlock(self):
         if super(PaintEllipse, self).unlock():
-            if self.add_to_canvas:
+            if self.paint_widget.add_shapes_to_canvas:
                 self.ellipse_color_inst.rgba = self.line_color
             return True
         return False
@@ -1463,7 +1463,7 @@ class PaintPolygon(PaintShape):
 
     def finish(self):
         if super(PaintPolygon, self).finish():
-            if self.add_to_canvas:
+            if self.paint_widget.add_shapes_to_canvas:
                 self.perim_color_inst.rgba = self.line_color
                 self.perim_inst.close = True
             return True
@@ -1471,14 +1471,14 @@ class PaintPolygon(PaintShape):
 
     def lock(self):
         if super(PaintPolygon, self).lock():
-            if self.add_to_canvas:
+            if self.paint_widget.add_shapes_to_canvas:
                 self.perim_color_inst.rgba = self.line_color_locked
             return True
         return False
 
     def unlock(self):
         if super(PaintPolygon, self).unlock():
-            if self.add_to_canvas:
+            if self.paint_widget.add_shapes_to_canvas:
                 self.perim_color_inst.rgba = self.line_color
             return True
         return False
