@@ -1701,3 +1701,40 @@ PaintCanvasBehavior.shape_cls_map = {
     'polygon': PaintPolygon, 'freeform': PaintPolygon,
     'bezier': PaintBezier
 }
+
+
+if __name__ == '__main__':
+    from kivy.uix.widget import Widget
+    from kivy.app import runTouchApp
+    from kivy.lang import Builder
+
+    class PainterWidget(PaintCanvasBehavior, Widget):
+        pass
+
+    runTouchApp(Builder.load_string("""
+BoxLayout:
+    orientation: 'vertical'
+    PainterWidget:
+        draw_mode: mode.text or 'freeform'
+        locked: lock.state == 'down'
+        select: select.state == 'down'
+        multiselect: multiselect.state == 'down'
+        add_shapes_to_canvas: True
+    BoxLayout:
+        size_hint_y: None
+        height: "50dp"
+        spacing: '20dp'
+        Spinner:
+            id: mode
+            values: ['circle', 'ellipse', 'polygon', 'freeform', 'bezier', 'none']
+            text: 'freeform'
+        ToggleButton:
+            id: lock
+            text: "Lock"
+        ToggleButton:
+            id: select
+            text: "Select"
+        ToggleButton:
+            id: multiselect
+            text: "Multiselect"
+    """))
