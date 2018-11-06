@@ -622,6 +622,15 @@ class PaintCanvasBehavior(FocusBehavior, EventDispatcher):
         return super(PaintCanvasBehavior, self).keyboard_on_key_up(
             window, keycode)
 
+    def create_add_shape(self, cls):
+        shape = self.shape_cls_map[cls](
+            paint_widget=self, line_color=self.line_color,
+            line_color_edit=self.line_color_edit,
+            selection_color=self.selection_color,
+            line_color_locked=self.line_color_locked)
+        self.add_shape(shape)
+        return shape
+
     def save_shapes(self):
         return [s.get_state() for s in self.shapes]
 
