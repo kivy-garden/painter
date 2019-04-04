@@ -557,6 +557,8 @@ class PaintShape(EventDispatcher):
 
     locked = BooleanProperty(False)
 
+    color_instructions = []
+
     __events__ = ('on_update', )
 
     def __init__(
@@ -569,6 +571,7 @@ class PaintShape(EventDispatcher):
         self.line_color_locked = line_color_locked
         self.line_width = line_width
         self.selection_point_color = selection_point_color
+        self.color_instructions = []
 
         self.graphics_name = '{}-{}'.format(self.__class__.__name__, id(self))
         self.graphics_point_select_name = '{}-point'.format(self.graphics_name)
@@ -707,6 +710,14 @@ class PaintShape(EventDispatcher):
     def add_area_graphics_to_canvas(self, name, canvas):
         pass
 
+    def show_shape_in_canvas(self):
+        for color in self.color_instructions:
+            color.rgba = [color.r, color.g, color.b, 1.]
+
+    def hide_shape_in_canvas(self):
+        for color in self.color_instructions:
+            color.rgba = [color.r, color.g, color.b, 0.]
+
 
 class PaintCircle(PaintShape):
 
@@ -742,17 +753,23 @@ class PaintCircle(PaintShape):
         if not super(PaintCircle, self).add_shape_to_canvas(paint_widget):
             return False
 
+        colors = self.color_instructions = []
+
         x, y = self.center
         r = self.radius
         inst = self.ellipse_color_inst = Color(
             *self.line_color, group=self.graphics_name)
+        colors.append(inst)
+
         self._instruction_group.add(inst)
         inst = self.perim_ellipse_inst = Line(
             circle=(x, y, r), width=self.line_width,
             group=self.graphics_name)
         self._instruction_group.add(inst)
-        self._instruction_group.add(
-            Color(*self.selection_point_color, group=self.graphics_name))
+        inst = Color(*self.selection_point_color, group=self.graphics_name)
+        self._instruction_group.add(inst)
+        colors.append(inst)
+
         inst = self.selection_point_inst = Point(
             points=[x + r, y], pointsize=self.pointsize,
             group=self.graphics_name)
@@ -808,14 +825,14 @@ class PaintCircle(PaintShape):
     def lock(self):
         if super(PaintCircle, self).lock():
             if self._instruction_group is not None:
-                self.ellipse_color_inst.rgba = self.line_color_locked
+                self.ellipse_color_inst.rgb = self.line_color_locked[:3]
             return True
         return False
 
     def unlock(self):
         if super(PaintCircle, self).unlock():
             if self._instruction_group is not None:
-                self.ellipse_color_inst.rgba = self.line_color
+                self.ellipse_color_inst.rgb = self.line_color[:3]
             return True
         return False
 
@@ -915,12 +932,15 @@ class PaintEllipse(PaintShape):
         if not super(PaintEllipse, self).add_shape_to_canvas(paint_widget):
             return False
 
+        colors = self.color_instructions = []
+
         x, y = self.center
         rx, ry = self.radius_x, self.radius_y
         angle = self.angle
 
         i1 = self.ellipse_color_inst = Color(
             *self.line_color, group=self.graphics_name)
+        colors.append(i1)
 
         i2 = PushMatrix(group=self.graphics_name)
         i3 = self.rotate_inst = Rotate(
@@ -933,6 +953,8 @@ class PaintEllipse(PaintShape):
             points=[x, y + ry], pointsize=self.pointsize,
             group=self.graphics_name)
         i8 = Color(*self.selection_point_color, group=self.graphics_name)
+        colors.append(i8)
+
         i5 = self.selection_point_inst = Point(
             points=[x + rx, y], pointsize=self.pointsize,
             group=self.graphics_name)
@@ -1035,14 +1057,14 @@ class PaintEllipse(PaintShape):
     def lock(self):
         if super(PaintEllipse, self).lock():
             if self._instruction_group is not None:
-                self.ellipse_color_inst.rgba = self.line_color_locked
+                self.ellipse_color_inst.rgb = self.line_color_locked[:3]
             return True
         return False
 
     def unlock(self):
         if super(PaintEllipse, self).unlock():
             if self._instruction_group is not None:
-                self.ellipse_color_inst.rgba = self.line_color
+                self.ellipse_color_inst.rgb = self.line_color[:3]
             return True
         return False
 
@@ -1149,8 +1171,11 @@ class PaintPolygon(PaintShape):
         if not super(PaintPolygon, self).add_shape_to_canvas(paint_widget):
             return False
 
+        colors = self.color_instructions = []
+
         i1 = self.perim_color_inst = Color(
             *self.line_color, group=self.graphics_name)
+        colors.append(i1)
 
         i2 = self.perim_line_inst = Line(
             points=self.points, width=self.line_width,
@@ -1170,6 +1195,8 @@ class PaintPolygon(PaintShape):
             insts.append(line)
 
         i4 = Color(*self.selection_point_color, group=self.graphics_name)
+        colors.append(i4)
+
         i5 = self.selection_point_inst = Point(
             points=self.selection_point, pointsize=self.pointsize,
             group=self.graphics_name)
@@ -1290,14 +1317,14 @@ class PaintPolygon(PaintShape):
     def lock(self):
         if super(PaintPolygon, self).lock():
             if self._instruction_group is not None:
-                self.perim_color_inst.rgba = self.line_color_locked
+                self.perim_color_inst.rgb = self.line_color_locked[:3]
             return True
         return False
 
     def unlock(self):
         if super(PaintPolygon, self).unlock():
             if self._instruction_group is not None:
-                self.perim_color_inst.rgba = self.line_color
+                self.perim_color_inst.rgb = self.line_color[:3]
             return True
         return False
 
