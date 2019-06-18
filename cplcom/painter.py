@@ -15,7 +15,7 @@ from kivy.graphics.tesselator import Tesselator
 from kivy.event import EventDispatcher
 import copy
 
-from kivy.garden.collider import CollideEllipse, Collide2DPoly, CollideBezier
+from kivy_garden.collider import CollideEllipse, Collide2DPoly, CollideBezier
 
 
 def euclidean_dist(x1, y1, x2, y2):
