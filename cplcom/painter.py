@@ -1,25 +1,76 @@
 """
-Fix name uniqueness to just check rather than counting with _name_count.
+Painter Widget
+==============
+
+This package provides a widget upon which shapes can be drawn. This supports
+drawing a circle, ellipse, polygon, and a freeform polygon.
+
+Following is a simple example:
+
+.. code-block:: python
+
+    from kivy.uix.widget import Widget
+    from kivy.app import runTouchApp
+    from kivy.lang import Builder
+    from kivy.uix.behaviors.focus import FocusBehavior
+
+    class PainterWidget(PaintCanvasBehavior, FocusBehavior, Widget):
+
+        def create_shape_with_touch(self, touch):
+            shape = super(PainterWidget, self).create_shape_with_touch(touch)
+            if shape is not None:
+                shape.add_shape_to_canvas(self)
+            return shape
+
+        def add_shape(self, shape):
+            if super(PainterWidget, self).add_shape(shape):
+                shape.add_shape_to_canvas(self)
+                return True
+            return False
+
+
+    runTouchApp(Builder.load_string('''
+    BoxLayout:
+        orientation: 'vertical'
+        PainterWidget:
+            draw_mode: mode.text or 'freeform'
+            locked: lock.state == 'down'
+            multiselect: multiselect.state == 'down'
+        BoxLayout:
+            size_hint_y: None
+            height: "50dp"
+            spacing: '20dp'
+            Spinner:
+                id: mode
+                values: ['circle', 'ellipse', 'polygon', 'freeform', 'none']
+                text: 'freeform'
+            ToggleButton:
+                id: lock
+                text: "Lock"
+            ToggleButton:
+                id: multiselect
+                text: "Multi-select"
+    '''))
+
+To use it, select a paint shape, e.g. freeform and start drawing.
+Finished shapes can be dragged by their orange dot. Long clicking on any of the
+shape dots lets you edit the shape.
 """
 from functools import partial
-from math import cos, sin, atan2, pi, sqrt, isclose, acos
+from math import cos, sin, atan2, pi
 
-from kivy.uix.behaviors.focus import FocusBehavior
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import OptionProperty, BooleanProperty, NumericProperty, \
-    ListProperty, ObjectProperty, StringProperty
+    ListProperty
 from kivy.graphics import Ellipse, Line, Color, Point, Mesh, PushMatrix, \
     PopMatrix, Rotate, InstructionGroup
 from kivy.graphics.tesselator import Tesselator
 from kivy.event import EventDispatcher
 import copy
 
-from kivy_garden.collider import CollideEllipse, Collide2DPoly, CollideBezier
-
-
-def euclidean_dist(x1, y1, x2, y2):
-    return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+__all__ = ('PaintCanvasBehavior', 'PaintShape', 'PaintCircle', 'PaintEllipse',
+           'PaintPolygon', 'PaintFreeformPolygon', 'PaintCanvasBehaviorBase')
 
 
 def rotate_pos(x, y, cx, cy, angle, base_angle=0.):
@@ -30,9 +81,24 @@ def rotate_pos(x, y, cx, cy, angle, base_angle=0.):
 
 
 class PaintCanvasBehaviorBase(EventDispatcher):
-    ''':attr:`shapes`, :attr:`selected_shapes`, :attr:`draw_mode`,
-    :attr:`current_shape`, :attr:`locked`, :attr:`select`, and
-    :attr:`selection_shape` are the attributes that make up the state machine.
+    '''Abstract base class that can paint on a widget canvas. See
+    :class:`PaintCanvasBehavior` for a the implementation that can be used
+    with touch to draw upon.
+
+    Accepted keyboard keys and their meaning
+    ----------------------------------------
+
+    You must inherit from :class:`~kivy.uix.behaviors.focus.FocusBehavior`
+    to be able to be use the keyboard functionality.
+
+    - `ctrl`: The has the same affect as :attr:`multiselect` being True.
+    - `delete`: Deletes all the currently :attr:`selected_shapes`.
+    - `right`, `left`, `up`, `down` arrow keys: moves the currently
+      :attr:`selected_shapes` in the given direction.
+    - `ctrl+a`: Selects all the :attr:`shapes`.
+    - `ctrl+d`: Duplicates all the currently :attr:`selected_shapes`. Similar
+      to :meth:`duplicate_selected_shapes`.
+    - `escape`: de-selects all the currently :attr:`selected_shapes`.
 
     Internal Logic
     ---------------
@@ -50,40 +116,57 @@ class PaintCanvasBehaviorBase(EventDispatcher):
     Next we check if we need to select a shape by the selection points.
     If so, the touch will select or add to selection a shape. If no shape
     is near enough the selection point, the selection will be cleared when the
-    touch moves or comes up
+    touch moves or comes up.
+
+    Finally, if no shape is selected or active, we create a new one on up or
+    if the mouse moves.
     '''
 
     shapes = ListProperty([])
+    """A list of :class:`PaintShape` instances currently added to the painting
+    widget.
+    """
 
     selected_shapes = ListProperty([])
+    """A list of :class:`PaintShape` instances currently selected in the
+    painting widget.
+    """
 
     current_shape = None
     '''Holds shape currently being edited. Can be a finished shape, e.g. if
     a point is selected.
 
-    Either :attr:`current_shape` or :attr:`selection_shape` or both must be
-    None.
+    Read only.
     '''
 
     locked = BooleanProperty(False)
-    '''When locked, only selection is allowed. We cannot select points
-    (except in :attr:`selection_shape`) and :attr:`current_shape` must
-    be None.
+    '''It locks all added shapes so they cannot be interacted with.
+
+    Setting it to `True` will finish any shapes being drawn and unselect them.
     '''
 
     multiselect = BooleanProperty(False)
+    """Whether multiple shapes can be selected by holding down control.
+
+    Holding down the control key has the same effect as :attr:`multiselect`
+    being True.
+    """
 
     min_touch_dist = dp(10)
+    """Min distance of a touch to point for it to count as close enough to be
+    able to select that point.
+    """
 
     long_touch_delay = .7
+    """Minimum delay after a touch down before a touch up, for the touch to
+    be considered a long touch.
+    """
 
     _long_touch_trigger = None
 
     _ctrl_down = None
 
     _processing_touch = None
-
-    shapes_canvas = False
 
     def __init__(self, **kwargs):
         super(PaintCanvasBehaviorBase, self).__init__(**kwargs)
@@ -107,8 +190,11 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         self.clear_selected_shapes()
 
     def finish_current_shape(self):
-        '''Returns True if there was a unfinished shape that was finished.
-        '''
+        """Finishes the current shape being drawn and adds it to
+        :attr:`shapes`.
+
+        Returns True if there was a unfinished shape that was finished.
+        """
         shape = self.current_shape
         if shape:
             if shape.finished:
@@ -126,23 +212,40 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         return False
 
     def start_shape_interaction(self, shape, pos=None):
+        """Called by the painter to start interacting with a shape e.g. when
+        a touch was close to a point of the shape.
+
+        This adds the shape to :attr:`current_shape`.
+
+        :param shape: The shape to start interacting with.
+        :param pos: The mouse pos, if available that caused the interaction.
+        """
         assert self.current_shape is None
         self.current_shape = shape
         shape.start_interaction(pos)
 
     def end_shape_interaction(self):
+        """Called by the painter to end interacting with the
+        :attr:`current_shape`.
+        """
         shape = self.current_shape
         if shape is not None:
             self.current_shape = None
             shape.stop_interaction()
 
     def clear_selected_shapes(self):
+        """De-selects all currently selected shapes."""
         shapes = self.selected_shapes[:]
         for shape in shapes:
             self.deselect_shape(shape)
         return shapes
 
     def delete_selected_shapes(self):
+        """De-selects and removes all currently selected shapes from
+        :attr:`shapes`.
+
+        :return: List of the shapes that were deleted, if any.
+        """
         shapes = self.selected_shapes[:]
         self.clear_selected_shapes()
         if self.current_shape is not None:
@@ -153,6 +256,12 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         return shapes
 
     def delete_all_shapes(self, keep_locked_shapes=True):
+        """Removes all currently selected shapes from :attr:`shapes`.
+
+        :param keep_locked_shapes: Whether to also delete the shapes that are
+            locked
+        :return: List of the shapes that were deleted, if any.
+        """
         self.finish_current_shape()
         shapes = self.shapes[:]
         for shape in shapes:
@@ -161,6 +270,11 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         return shapes
 
     def select_shape(self, shape):
+        """Selects the shape and adds it to :attr:`selected_shapes`.
+
+        :param shape: :class:`PaintShape` instance to select.
+        :return: A bool indicating whether the shape was successfully selected.
+        """
         if shape.select():
             self.finish_current_shape()
             self.selected_shapes.append(shape)
@@ -168,16 +282,32 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         return False
 
     def deselect_shape(self, shape):
+        """De-selects the shape and removes it from :attr:`selected_shapes`.
+
+        :param shape: :class:`PaintShape` instance to de-select.
+        :return: A bool indicating whether the shape was successfully
+        de-selected.
+        """
         if shape.deselect():
             self.selected_shapes.remove(shape)
             return True
         return False
 
     def add_shape(self, shape):
+        """Add the shape to :attr:`shapes` and to the painter.
+
+        :param shape: :class:`PaintShape` instance to add.
+        :return: A bool indicating whether the shape was successfully added.
+        """
         self.shapes.append(shape)
         return True
 
     def remove_shape(self, shape):
+        """Removes the shape from the painter and from :attr:`shapes`.
+
+        :param shape: :class:`PaintShape` instance to remove.
+        :return: A bool indicating whether the shape was successfully removed.
+        """
         self.deselect_shape(shape)
 
         if shape is self.current_shape:
@@ -190,6 +320,15 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         return False
 
     def reorder_shape(self, shape, before_shape=None):
+        """Move the shape up or down in depth, in terms of the shape order in
+        :attr:`shapes` and in the canvas.
+
+        :param shape: :class:`PaintShape` instance to move from it's current
+            position.
+        :param before_shape: Where to add it. If `None`, it is moved at the
+            end, otherwise it is moved after the given :class:`PaintShape` in
+            :attr:`shapes`.
+        """
         self.shapes.remove(shape)
         if before_shape is None:
             self.shapes.append(shape)
@@ -202,6 +341,14 @@ class PaintCanvasBehaviorBase(EventDispatcher):
                 s.move_to_top()
 
     def duplicate_selected_shapes(self):
+        """Duplicates all currently :attr:`selected_shapes` and adds them
+        to :attr:`shapes`.
+
+        The new shapes are added a slight offset from the original
+        shape positions.
+
+        :return: The original :attr:`selected_shapes` that were duplicated.
+        """
         shapes = self.selected_shapes[:]
         self.clear_selected_shapes()
         for shape in shapes:
@@ -209,18 +356,54 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         return shapes
 
     def duplicate_shape(self, shape):
+        """Duplicate the shape and adds it to :attr:`shapes`.
+
+        The new shapes is added at a slight offset from the original
+        shape position.
+
+        :param shape: :class:`PaintShape` to duplicate.
+        :return: The new :class:`PaintShape` that was created.
+        """
         new_shape = copy.deepcopy(shape)
         self.add_shape(new_shape)
-        shape.translate(dpos=(15, 15))
-        return shape
+        new_shape.translate(dpos=(15, 15))
+        return new_shape
 
     def create_shape_with_touch(self, touch):
+        """Called internally whenever the user has done something with a
+        touch such that the controller wants to create a new
+        :class:`PaintShape` to be added to the painter.
+
+        This should return a new :class:`PaintShape` instance that will be
+        added to the painter.
+
+        :param touch: The touch that caused this call.
+        :return: A new :class:`PaintShape` instance to be added.
+        """
         raise NotImplementedError
 
     def check_new_shape_done(self, shape, state):
+        """Checks whether the shape has been finished drawing. This is how
+        the controller decides whether the shape can be considered done and
+        moved on from.
+
+        The controller calls this with the :attr:`current_shape` at every touch
+        to figure out if the shape is done and ready to be added to
+        :attr:`shapes`.
+
+        :param shape: The :class:`PaintShape` to check.
+        :param state: The touch state (internal, not sure if this will stay.)
+        :return: Whether the touch is completed and fully drawn.
+        """
         return not shape.finished and shape.ready_to_finish
 
     def lock_shape(self, shape):
+        """Locks the shape so that it cannot be interacted with by touch.
+
+        :param shape: The :class:`PaintShape` to lock. It should be in
+            :attr:`shapes`.
+        :return: Whether the shape was successfully locked.
+        """
         if shape.locked:
             return False
 
@@ -232,11 +415,29 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         return shape.lock() or res
 
     def unlock_shape(self, shape):
+        """Unlocks the shape so that it can be interacted with again by touch.
+
+        :param shape: The :class:`PaintShape` to unlock. It should be in
+            :attr:`shapes`.
+        :return: Whether the shape was successfully unlocked.
+        """
         if shape.locked:
             return shape.unlock()
         return False
 
     def get_closest_selection_point_shape(self, x, y):
+        """Given a position, it returns the shape whose selection point is the
+        closest to this position among all the shapes.
+
+        This is how we find the shape to drag around and select it. Each shape
+        has a single selection point by which it can be selected and dragged.
+        We find the shape with the closest selection point among all the
+        shapes, and that shape is returned.
+
+        :param x: The x pos.
+        :param y: The y pos.
+        :return: The :class:`PaintShape` that is the closest as described.
+        """
         min_dist = self.min_touch_dist
         closest_shape = None
         for shape in reversed(self.shapes):  # upper shape takes pref
@@ -251,6 +452,18 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         return closest_shape
 
     def get_closest_shape(self, x, y):
+        """Given a position, it returns the shape that has a point on its
+        boundary that is the closest to this position, among all the shapes.
+
+        This is how we find the shape on e.g. a long touch when we start
+        editing the shape. We find the closest point among all the boundary
+        points of all the shapes, and the shape with the closest point is
+        returned.
+
+        :param x: The x pos.
+        :param y: The y pos.
+        :return: The :class:`PaintShape` that is the closest as described.
+        """
         min_dist = self.min_touch_dist
         closest_shape = None
         for shape in reversed(self.shapes):  # upper shape takes pref
@@ -266,11 +479,19 @@ class PaintCanvasBehaviorBase(EventDispatcher):
 
     def on_touch_down(self, touch):
         ud = touch.ud
+        # whether the touch was used by the painter for any purpose whatsoever
         ud['paint_interacted'] = False
+        # can be one of current, selected, done indicating how the touch was
+        # used, if it was used. done means the touch is done and don't do
+        # anything with anymore. selected means a shape was selected.
         ud['paint_interaction'] = ''
+        # if this touch experienced a move
         ud['paint_touch_moved'] = False
+        # the shape that was selected if paint_interaction is selected
         ud['paint_selected_shape'] = None
-        ud['paint_selected_empty'] = False
+        # whether the selected_shapes contained the shape this touch was
+        # used to select a shape in touch_down.
+        ud['paint_was_selected'] = False
         ud['paint_cleared_selection'] = False
 
         if self.locked or self._processing_touch is not None:
@@ -305,7 +526,7 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         if shape is not None:
             ud['paint_interaction'] = 'selected'
             ud['paint_selected_shape'] = shape
-            ud['paint_selected_empty'] = not self.selected_shapes
+            ud['paint_was_selected'] = shape not in self.selected_shapes
             self._long_touch_trigger = Clock.schedule_once(
                 partial(self.do_long_touch, touch), self.long_touch_delay)
             return True
@@ -319,6 +540,8 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         return True
 
     def do_long_touch(self, touch, *largs):
+        """Handles a long touch by the user.
+        """
         assert self._processing_touch
         touch.push()
         touch.apply_transform_2d(self.to_widget)
@@ -466,8 +689,12 @@ class PaintCanvasBehaviorBase(EventDispatcher):
 
         assert ud['paint_interaction'] == 'selected'
         if ud['paint_touch_moved']:
+            # moving normally doesn't change the selection state
             ud['paint_interaction'] = 'done'
-            if ud['paint_selected_empty'] and \
+            # this is a quick selection mode where someone dragged a object but
+            # nothing was selected so don't keep the object that was dragged
+            # selected
+            if ud['paint_was_selected'] and \
                     len(self.selected_shapes) == 1 and \
                     self.selected_shapes[0] == ud['paint_selected_shape']:
                 self.clear_selected_shapes()
@@ -479,8 +706,10 @@ class PaintCanvasBehaviorBase(EventDispatcher):
             return True
 
         if self._ctrl_down or self.multiselect:
-            if shape in self.selected_shapes:
+            if not ud['paint_was_selected'] and shape in self.selected_shapes:
                 self.deselect_shape(shape)
+            elif ud['paint_was_selected']:
+                self.select_shape(shape)
         else:
             if len(self.selected_shapes) != 1 or \
                     self.selected_shapes[0] != shape:
@@ -1419,6 +1648,11 @@ class PaintFreeformPolygon(PaintPolygon):
 
 
 class PaintCanvasBehavior(PaintCanvasBehaviorBase):
+    """Implements the :class:`PaintCanvasBehaviorBase` to be able to draw
+    any of the following shapes: `'circle', 'ellipse', 'polygon', 'freeform'`.
+
+
+    """
 
     draw_mode = OptionProperty('freeform', options=[
         'circle', 'ellipse', 'polygon', 'freeform', 'none'])
@@ -1474,8 +1708,9 @@ if __name__ == '__main__':
     from kivy.uix.widget import Widget
     from kivy.app import runTouchApp
     from kivy.lang import Builder
+    from kivy.uix.behaviors.focus import FocusBehavior
 
-    class PainterWidget(PaintCanvasBehavior, Widget):
+    class PainterWidget(PaintCanvasBehavior, FocusBehavior, Widget):
 
         def create_shape_with_touch(self, touch):
             shape = super(PainterWidget, self).create_shape_with_touch(touch)
@@ -1510,5 +1745,5 @@ BoxLayout:
             text: "Lock"
         ToggleButton:
             id: multiselect
-            text: "Multiselect"
+            text: "Multi-select"
     """))
