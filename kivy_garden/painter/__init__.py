@@ -13,7 +13,7 @@ functionality of the listed shapes.
 See :class:`PaintShape` for how to save shape metadata and then later
 reconstruct the shape.
 
-Following is a simple example:
+Following is a simple example::
 
 .. code-block:: python
 
@@ -2165,7 +2165,7 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
                 'polygon', points=[0, 0, 300, 0, 300, 800, 0, 800])
 
         :param cls_name: The name of the shape class to create, e.g.
-            ``"PaintEllipse"``. It uses :attr:`shape_cls_name_map` to find the
+            ``"ellipse"``. It uses :attr:`shape_cls_map` to find the
             class to instantiate.
         :param inst_kwargs: Configuration options for the new shape that
             will be passed as options to the class when it is instantiated.
