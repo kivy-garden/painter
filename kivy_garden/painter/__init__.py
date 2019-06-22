@@ -13,7 +13,7 @@ functionality of the listed shapes.
 See :class:`PaintShape` for how to save shape metadata and then later
 reconstruct the shape.
 
-Following is a simple example::
+Following is a simple example:
 
 .. code-block:: python
 
@@ -98,8 +98,7 @@ class PaintCanvasBehaviorBase(EventDispatcher):
     :class:`PaintCanvasBehavior` for a the implementation that can be used
     with touch to draw upon.
 
-    Accepted keyboard keys and their meaning
-    ----------------------------------------
+    *Accepted keyboard keys and their meaning*
 
     You must inherit from :class:`~kivy.uix.behaviors.focus.FocusBehavior`
     to be able to be use the keyboard functionality.
@@ -113,8 +112,7 @@ class PaintCanvasBehaviorBase(EventDispatcher):
       to :meth:`duplicate_selected_shapes`.
     - `escape`: de-selects all the currently :attr:`selected_shapes`.
 
-    Internal Logic
-    ---------------
+    *Internal Logic*
 
     Each shape has a single point by which it is dragged. However, one can
     interact with other parts of the shape as determined by the shape instance.
@@ -165,9 +163,9 @@ class PaintCanvasBehaviorBase(EventDispatcher):
     being True.
     """
 
-    min_touch_dist = dp(10)
+    min_touch_dist = 10
     """Min distance of a touch to point for it to count as close enough to be
-    able to select that point.
+    able to select that point. It's in :func:`kivy.metrics.dp` units.
     """
 
     long_touch_delay = .7
@@ -299,7 +297,7 @@ class PaintCanvasBehaviorBase(EventDispatcher):
 
         :param shape: :class:`PaintShape` instance to de-select.
         :return: A bool indicating whether the shape was successfully
-        de-selected.
+            de-selected.
         """
         if shape.deselect():
             self.selected_shapes.remove(shape)
@@ -453,7 +451,7 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         :param y: The y pos.
         :return: The :class:`PaintShape` that is the closest as described.
         """
-        min_dist = self.min_touch_dist
+        min_dist = dp(self.min_touch_dist)
         closest_shape = None
         for shape in reversed(self.shapes):  # upper shape takes pref
             if shape.locked:
@@ -479,7 +477,7 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         :param y: The y pos.
         :return: The :class:`PaintShape` that is the closest as described.
         """
-        min_dist = self.min_touch_dist
+        min_dist = dp(self.min_touch_dist)
         closest_shape = None
         for shape in reversed(self.shapes):  # upper shape takes pref
             if shape.locked:
@@ -527,7 +525,7 @@ class PaintCanvasBehaviorBase(EventDispatcher):
         if current_shape is not None:
             ud['paint_cleared_selection'] = current_shape.finished and \
                 current_shape.get_interaction_point_dist(touch.pos) \
-                >= self.min_touch_dist
+                >= dp(self.min_touch_dist)
             if ud['paint_cleared_selection']:
                 self.finish_current_shape()
 
@@ -777,7 +775,7 @@ class PaintShape(EventDispatcher):
     :meth:`get_state`. The shape can then be re-created by creating the shape
     and calling :meth:`set_state`.
 
-    For example::
+    For example:
 
     .. code-block:: python
 
@@ -797,7 +795,7 @@ class PaintShape(EventDispatcher):
         painter.add_shape(shape)
 
     A shape can also be copied more directly with
-    :meth:`PaintCanvasBehaviorBase.duplicate_shape`. Or manually with e.g.::
+    :meth:`PaintCanvasBehaviorBase.duplicate_shape`. Or manually with e.g.:
 
     .. code-block:: python
 
@@ -944,7 +942,7 @@ class PaintShape(EventDispatcher):
 
         If this is never called, the shape won't ever be shown visually.
 
-        A typical pattern of how this is used is::
+        A typical pattern of how this is used is:
 
         .. code-block:: python
 
@@ -975,7 +973,7 @@ class PaintShape(EventDispatcher):
         If this is never called, the shape won't be removed and will remain
         visible.
 
-        A typical pattern of how this is used is::
+        A typical pattern of how this is used is:
 
         .. code-block:: python
 
@@ -1287,7 +1285,7 @@ class PaintCircle(PaintShape):
     or if the shape is not :attr:`finished`.
     """
 
-    radius = NumericProperty(dp(10))
+    radius = NumericProperty('10dp')
     """The radius of the circle.
 
     This can be set, and the shape will resize itself to the new size.
@@ -1474,7 +1472,7 @@ class PaintEllipse(PaintShape):
     or if the shape is not :attr:`finished`.
     """
 
-    radius_x = NumericProperty(dp(10))
+    radius_x = NumericProperty('10dp')
     """The x-radius of the circle.
 
     This can be set, and the shape will resize itself to the new size.
@@ -1483,7 +1481,7 @@ class PaintEllipse(PaintShape):
     or if the shape is not :attr:`finished`.
     """
 
-    radius_y = NumericProperty(dp(15))
+    radius_y = NumericProperty('15dp')
     """The y-radius of the circle.
 
     This can be set, and the shape will resize itself to the new size.
@@ -2157,7 +2155,7 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
         """Creates a new shape instance and adds it the painter with
         :meth:`~PaintCanvasBehaviorBase.add_shape`.
 
-        E.g.::
+        E.g.:
 
         .. code-block:: python
 
