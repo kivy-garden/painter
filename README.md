@@ -16,6 +16,8 @@ Flower information
 Flower for drawing shapes in Kivy.
 Please see the module documentation for more information.
 
+[![Painter flower](http://img.youtube.com/vi/gsqgfqunKkg/0.jpg)](https://www.youtube.com/watch?v=gsqgfqunKkg "Kivy-garden painter flower")
+
 Install
 ---------
 

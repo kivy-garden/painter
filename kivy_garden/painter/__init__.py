@@ -2228,10 +2228,9 @@ if __name__ == '__main__':
             return False
 
         def on_touch_down(self, touch):
-            if super(PainterWidget, self).on_touch_down(touch):
+            if self.collide_point(*touch.pos):
                 self.mouse = True
-                return True
-            return False
+            return super(PainterWidget, self).on_touch_down(touch)
 
         def on_touch_up(self, touch):
             self.mouse = False
@@ -2289,7 +2288,6 @@ BoxLayout:
             id: multiselect
             text: "Multi-select"
         ToggleButton:
-            id: multiselect
             text: "Fill"
             on_state: painter.add_colored_shapes_area() if self.state == \
 'down' else painter.canvas.remove_group('colorful')
