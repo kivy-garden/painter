@@ -3,7 +3,15 @@ Painter Widget
 ==============
 
 This package provides a widget upon which shapes can be drawn. This supports
-drawing a circle, ellipse, polygon, and a freeform polygon.
+drawing a :class:`PaintCircle`, :class:`PaintEllipse`, :class:`PaintPolygon`,
+and a :class:`PaintFreeformPolygon` using a :class:`PaintCanvasBehavior`.
+:class:`PaintCanvasBehaviorBase` is the high level controller that doesn't
+know about specific shapes, only about the shape base class,
+:class:`PaintShape`. :class:`PaintCanvasBehavior` adds the specific
+functionality of the listed shapes.
+
+See :class:`PaintShape` for how to save shape metadata and then later
+reconstruct the shape.
 
 Following is a simple example:
 
@@ -73,7 +81,10 @@ __all__ = ('PaintCanvasBehavior', 'PaintShape', 'PaintCircle', 'PaintEllipse',
            'PaintPolygon', 'PaintFreeformPolygon', 'PaintCanvasBehaviorBase')
 
 
-def rotate_pos(x, y, cx, cy, angle, base_angle=0.):
+def _rotate_pos(x, y, cx, cy, angle, base_angle=0.):
+    """Rotates ``(x, y)`` by angle ``angle`` along a circle centered at
+    ``(cx, cy)``.
+    """
     hyp = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
     xp = hyp * cos(angle + base_angle)
     yp = hyp * sin(angle + base_angle)
@@ -322,6 +333,8 @@ class PaintCanvasBehaviorBase(EventDispatcher):
     def reorder_shape(self, shape, before_shape=None):
         """Move the shape up or down in depth, in terms of the shape order in
         :attr:`shapes` and in the canvas.
+
+        This effect whether a shape will obscure another.
 
         :param shape: :class:`PaintShape` instance to move from it's current
             position.
@@ -755,38 +768,143 @@ class PaintCanvasBehaviorBase(EventDispatcher):
 
 
 class PaintShape(EventDispatcher):
+    """Base class for shapes used by :attr:`PaintCanvasBehavior` when creating
+    new shapes when drawing.
 
-    finished = False
+    All the data that configures a shape can be gotten by calling
+    :meth:`get_state`. The shape can then be re-created by creating the shape
+    and calling :meth:`set_state`.
 
-    selected = False
+    For example::
 
-    interacting = False
+    .. code-block:: python
 
-    ready_to_finish = False
+        shape = PaintCircle(...)
+        state = shape.get_state()
+        my_yaml.save_config(filename, state)
 
-    is_valid = False
+        # then later
+        state = my_yaml.load_file(filename)
+        shape = PaintCircle()
+        shape.set_state(state)
+        shape.set_valid()
+        shape.finish()
+        if not shape.is_valid:
+            raise ValueError(
+                'Shape {} is not valid and cannot be added'.format(shape))
+        painter.add_shape(shape)
 
-    paint_widget = None
+    A shape can also be copied more directly with
+    :meth:`PaintCanvasBehaviorBase.duplicate_shape`. Or manually with e.g.::
+
+    .. code-block:: python
+
+        import copy
+        shape = PaintCircle(...)
+        new_shape = copy.deepcopy(shape)
+        painter.add_shape(new_shape)
+        new_shape.translate(dpos=(15, 15))
+
+    :Events:
+
+        on_update:
+            Dispatched whenever the shape is changed in any way, e.g.
+            translated etc. This is only dispatched once the shape is finished.
+    """
 
     line_width = 1
-
-    line_color = 0, 1, 0, 1
-
-    selection_point_color = 1, .5, .31, 1
-
-    line_color_locked = .4, .56, .36, 1
+    """The line width of lines shown, in :func:`~kivy.metrics.dp`.
+    """
 
     pointsize = 3
+    """The point size of points shown, in :func:`~kivy.metrics.dp`.
+    """
 
-    graphics_name = ''
+    line_color = 0, 1, 0, 1
+    """The line color of lines and/or points shown.
+    """
 
-    graphics_point_select_name = ''
+    selection_point_color = 1, .5, .31, 1
+    """The color of the point by which the shape is selected/dragged.
+    """
 
-    _instruction_group = None
+    line_color_locked = .4, .56, .36, 1
+    """The line color of lines and/or points shown when the shape is
+    :attr:`locked`.
+    """
+
+    selected = False
+    """Whether the shape is currently selected in
+    :attr:`~PaintCanvasBehaviorBase.selected_shapes`. See :meth:`select`.
+
+    Read only. Call :meth:`PaintCanvasBehaviorBase.select_shape` to change.
+    """
 
     locked = BooleanProperty(False)
+    """Whether the shape is currently locked and
+    :class:`PaintCanvasBehaviorBase` won't interact with it. See :meth:`lock`.
+
+    Read only. Call :meth:`PaintCanvasBehaviorBase.lock_shape` to change.
+    """
+
+    finished = False
+    """Whether the shape has been finished drawing. See :meth:`finish`.
+
+    Read only.
+    """
+
+    interacting = False
+    """Whether :class:`PaintCanvasBehavior` is currently interacting with this
+    shape e.g. in :attr:`PaintCanvasBehavior.current_shape`. See
+    :meth:`start_interaction`.
+
+    Read only.
+    """
+
+    ready_to_finish = False
+    """Whether the shape is ready to be finished. Used by
+    :class:`PaintCanvasBehavior` to decide whether to finish the shape.
+    See :meth:`finish`.
+
+    Read only.
+    """
+
+    is_valid = False
+    """Whether the shape is in a valid state. If :meth:`finish` when not in a
+    valid state, :class:`PaintCanvasBehavior` will not keep the shape.
+
+    Read only.
+    """
+
+    paint_widget = None
+    """When the shape is added to a widget with :meth:`add_shape_to_canvas`,
+    it is the widget to which it is added.
+
+    Read only.
+    """
+
+    graphics_name = ''
+    """The group name given to all the canvas instructions added to the
+    :attr:`instruction_group`. These are the lines, points etc.
+
+    Read only and is automatically set when the shape is created.
+    """
+
+    instruction_group = None
+    """A :class:`~kivy.graphics.InstructionGroup` instance to which all the
+    canvas instructions that the shape displays is added to.
+
+    This is added to the host :attr:`paint_widget` by
+    :meth:`add_shape_to_canvas`.
+
+    Read only.
+    """
 
     color_instructions = []
+    """A list of all the color instructions used to color the shapes.
+
+    Read only.
+    """
 
     __events__ = ('on_update', )
 
@@ -794,6 +912,8 @@ class PaintShape(EventDispatcher):
             self, line_color=(0, 1, 0, 1),
             line_width=1, line_color_locked=(.4, .56, .36, 1),
             pointsize=2, selection_point_color=(1, .5, .31, 1), **kwargs):
+        self.graphics_name = '{}-{}'.format(self.__class__.__name__, id(self))
+
         super(PaintShape, self).__init__(**kwargs)
         self.pointsize = pointsize
         self.line_color = line_color
@@ -802,80 +922,214 @@ class PaintShape(EventDispatcher):
         self.selection_point_color = selection_point_color
         self.color_instructions = []
 
-        self.graphics_name = '{}-{}'.format(self.__class__.__name__, id(self))
-        self.graphics_point_select_name = '{}-point'.format(self.graphics_name)
-
     def on_update(self, *largs):
         pass
 
     def set_valid(self):
+        """Called internally after the shape potentially
+        :attr:`is_valid`, to set :attr:`is_valid` in case the shape is now
+        valid.
+
+        This needs to be called after a shape is constructed manually before it
+        is added with :meth:`PaintCanvasBehaviorBase.add_shape`. See
+        :class:`PaintCanvasBehavior` for an example.
+        """
         pass
 
     def add_shape_to_canvas(self, paint_widget):
-        if self._instruction_group is not None:
+        """Must be called on the shape to add it to the canvas on which the
+        shape should be displayed when it's being drawn.
+
+        If this is never called, the shape won't ever be shown visually.
+
+        A typical pattern of how this is used is::
+
+        .. code-block:: python
+
+            class PainterWidget(PaintCanvasBehavior, Widget):
+                def add_shape(self, shape):
+                    if super(PainterWidget, self).add_shape(shape):
+                        shape.add_shape_to_canvas(self)
+                        return True
+                    return False
+
+        :param paint_widget: A :class:`~kivy.uix.widget.Widget` to who's canvas
+            the graphics instructions displaying the shapes will be added.
+        :return: True if it was added, otherwise False e.g. if it has
+            previously already been added.
+        """
+        if self.instruction_group is not None:
             return False
 
         self.paint_widget = paint_widget
         with paint_widget.canvas:
-            self._instruction_group = InstructionGroup()
+            self.instruction_group = InstructionGroup()
         return True
 
     def remove_shape_from_canvas(self):
-        if self._instruction_group is None:
-            return False
+        """Must be called on the shape to remove it from the canvas to which
+        it has previously been added with :meth:`add_shape_to_canvas`.
 
-        self.paint_widget.canvas.remove(self._instruction_group)
-        self._instruction_group = None
+        If this is never called, the shape won't be removed and will remain
+        visible.
+
+        A typical pattern of how this is used is::
+
+        .. code-block:: python
+
+            class PainterWidget(PaintCanvasBehavior, Widget):
+                def remove_shape(self, shape):
+                    if super(PainterWidget, self).remove_shape(shape):
+                        shape.remove_shape_from_canvas()
+                        return True
+                    return False
+
+        :return: :attr:`paint_widget` to which the shapes has previously been
+            added, if it was added previously, otherwise None.
+        """
+        if self.instruction_group is None:
+            return None
+
+        paint_widget = self.paint_widget
+        paint_widget.canvas.remove(self.instruction_group)
+        self.instruction_group = None
         self.paint_widget = None
-        return True
+        return paint_widget
 
     def handle_touch_down(self, touch, opos=None):
+        """(internal) called by :class:`PaintCanvasBehaviorBase` to handle
+        a touch down that is relevant to this shape.
+
+        :param touch: The kivy touch.
+        :param opos: The original starting position of the touch e.g.
+            ``touch.opos`` if the touch has moved before this was called.
+        """
         raise NotImplementedError
 
     def handle_touch_move(self, touch):
+        """(internal) called by :class:`PaintCanvasBehaviorBase` to handle
+        a touch move that is relevant to this shape.
+
+        :param touch: The kivy touch.
+        """
         # if ready to finish, it needs to ignore until touch is up
         raise NotImplementedError
 
     def handle_touch_up(self, touch, outside=False):
+        """(internal) called by :class:`PaintCanvasBehaviorBase` to handle
+        a touch up that is relevant to this shape.
+
+        :param touch: The kivy touch.
+        :param outside: Whether the touch falls outside the
+            :class:`PaintCanvasBehaviorBase`.
+        """
         raise NotImplementedError
 
     def start_interaction(self, pos):
+        """(internal) called by
+        :meth:`PaintCanvasBehaviorBase.start_shape_interaction` when it wants
+        to start interacting with a shape, e.g. if there was a long touch
+        near the shape.
+
+        :param pos: The position of the touch that caused this interaction.
+        :return: Whether we started :attr:`interacting`. False if e.g.
+            it was already :attr:`interacting`.
+        """
         if self.interacting:
             return False
         self.interacting = True
         return True
 
     def stop_interaction(self):
+        """(internal) called by
+        :meth:`PaintCanvasBehaviorBase.end_shape_interaction` when it wants
+        to stop interacting with a shape.
+
+        :return: Whether we ended :attr:`interacting`. False if e.g.
+            we were not already :attr:`interacting`.
+        """
         if not self.interacting:
             return False
         self.interacting = False
         return True
 
     def get_selection_point_dist(self, pos):
-        pass
+        """Returns the minimum of the distance to a selection point that we can
+        interact with. Selections points is the differently colored point
+        (orange) by which the shape can be dragged or selected etc.
+
+        :param pos: The position to which to compute the min point distance.
+        :return: The minimum distance to pos, or a very large number if
+            there's no selection point available.
+        """
+        raise NotImplementedError
 
     def get_interaction_point_dist(self, pos):
-        pass
+        """Returns the minimum of the distance to any point in the shape that
+        we can interact with. These are all the points that can be manipulated
+        e.g. to change the shape size or orientation etc.
+
+        :param pos: The position to which to compute the min point distance.
+        :return: The minimum distance to pos, or a very large number if
+            there's no interaction points available.
+        """
+        raise NotImplementedError
 
     def finish(self):
+        """Called by
+        :meth:`PaintCanvasBehaviorBase.finish_current_shape` when it wants
+        to finish the shape and possibly add it to the
+        :attr:`PaintCanvasBehaviorBase.shapes`.
+
+        This needs to be called after a shape is constructed manually before it
+        is added with :meth:`PaintCanvasBehaviorBase.add_shape`. See
+        :class:`PaintCanvasBehavior` for an example.
+
+        :return: True if we just :attr:`finished` the shape, otherwise False
+            if it was already :attr:`finished`.
+        """
         if self.finished:
             return False
         self.finished = True
         return True
 
     def select(self):
+        """(internal) Called by
+        :meth:`PaintCanvasBehaviorBase.select_shape` to select the shape.
+
+        Don't call this directly.
+
+        :return: True if we just :attr:`selected` the shape, otherwise False
+            if it was already :attr:`selected`.
+        """
         if self.selected:
             return False
         self.selected = True
         return True
 
     def deselect(self):
+        """(internal) Called by
+        :meth:`PaintCanvasBehaviorBase.deselect_shape` to de-select the shape.
+
+        Don't call this directly.
+
+        :return: True if we just de- :attr:`selected` the shape, otherwise
+            False if it was already de- :attr:`selected`.
+        """
         if not self.selected:
             return False
         self.selected = False
         return True
 
     def lock(self):
+        """(internal) Called by
+        :meth:`PaintCanvasBehaviorBase.lock_shape` to lock the shape.
+
+        Don't call this directly.
+
+        :return: True if we just :attr:`locked` the shape, otherwise False
+            if it was already :attr:`locked`.
+        """
         if self.locked:
             return False
 
@@ -883,24 +1137,57 @@ class PaintShape(EventDispatcher):
         return True
 
     def unlock(self):
+        """(internal) Called by
+        :meth:`PaintCanvasBehaviorBase.unlock_shape` to unlock the shape.
+
+        Don't call this directly.
+
+        :return: True if we just un :attr:`locked` the shape, otherwise
+            False if it was already un :attr:`locked`.
+        """
         if not self.locked:
             return False
 
         self.locked = False
         return True
 
-    def translate(self, dpos):
-        return False
+    def translate(self, dpos=None, pos=None):
+        """Translates the shape by ``dpos`` or to be at ``pos``.
+
+        This should only be called
+
+        :param dpos: The change in x, y by which to translate the shape, if not
+            None.
+        :param pos: The final position to which to set the shape, if not None.
+        :return: Whether the shape was successfully translated.
+        """
+        raise NotImplementedError
 
     def move_to_top(self):
-        if self._instruction_group is None:
+        """(internal) Called by
+        :meth:`PaintCanvasBehaviorBase.reorder_shape` to move the shape to the
+        top of the canvas.
+
+        Don't call this directly.
+
+        :return: True if we were able to move it up..
+        """
+        if self.instruction_group is None:
             return
 
-        self.paint_widget.canvas.remove(self._instruction_group)
-        self.paint_widget.canvas.add(self._instruction_group)
+        self.paint_widget.canvas.remove(self.instruction_group)
+        self.paint_widget.canvas.add(self.instruction_group)
         return True
 
     def get_state(self, state=None):
+        """Returns a configuration dictionary that can be used to duplicate
+        the shape with all the configuration values of the shape. See
+        :class:`PaintShape`.
+
+        :param state: A dict, or None. If not None, the config data will be
+            added to the dict, otherwise a new dict is created and returned.
+        :return: A dict with all the config data of the shape.
+        """
         d = {} if state is None else state
         for k in ['line_color', 'line_width', 'is_valid', 'locked',
                   'line_color_locked']:
@@ -910,6 +1197,11 @@ class PaintShape(EventDispatcher):
         return d
 
     def set_state(self, state):
+        """Takes a configuration dictionary and applies it to the shape. See
+        :class:`PaintShape` and :meth:`get_state`.
+
+        :param state: A dict with shape specific configuration values.
+        """
         state = dict(state)
         lock = None
         for k, v in state.items():
@@ -937,32 +1229,86 @@ class PaintShape(EventDispatcher):
         return obj
 
     def add_area_graphics_to_canvas(self, name, canvas):
-        pass
+        """Add graphics instructions to ``canvas`` such that the inside area
+        of the shapes will be colored in with the color instruction
+        below it in the canvas.
+
+        See the examples how to use it.
+
+        :param name: The group name given to the graphics instructions when
+            they are added to the canvas. This is how the canvas can remove
+            them all at once.
+        :param canvas: The canvas to which to add the instructions.
+        """
+        raise NotImplementedError
 
     def show_shape_in_canvas(self):
+        """Shows the shape in the widget's canvas. Call this after
+        :meth:`hide_shape_in_canvas` to display the shape again.
+        """
         for color in self.color_instructions:
             color.rgba = [color.r, color.g, color.b, 1.]
 
     def hide_shape_in_canvas(self):
+        """Hides the shape so that it is not visible in the widget to which it
+        was added with :meth:`add_shape_to_canvas`.
+        """
         for color in self.color_instructions:
             color.rgba = [color.r, color.g, color.b, 0.]
 
+    def rescale(self, scale):
+        """Rescales the all the perimeter points/lines distance from the center
+        of the shape by the fractional amount ``scale``.
+
+        E.g. if a point on the perimeter is at distance ``X`` from the center
+        of the shape, after this function it'll be at distance ``scale * X``
+        from the center of the shape.
+
+        :param scale: amount by which to scale
+        """
+        raise NotImplementedError
+
 
 class PaintCircle(PaintShape):
+    """A shape that represents a circle.
+
+    The shape has a single point by which it can be dragged or the radius
+    expanded.
+    """
 
     center = ListProperty([0, 0])
+    """A 2-tuple containing the center position of the circle.
+
+    This can be set, and the shape will translate itself to the new center pos.
+
+    This is read only while a user is interacting with the shape with touch,
+    or if the shape is not :attr:`finished`.
+    """
+
+    radius = NumericProperty(dp(10))
+    """The radius of the circle.
+
+    This can be set, and the shape will resize itself to the new size.
+
+    This is read only while a user is interacting with the shape with touch,
+    or if the shape is not :attr:`finished`.
+    """
 
     perim_ellipse_inst = None
+    """(internal) The graphics instruction representing the perimeter.
+    """
 
     ellipse_color_inst = None
+    """(internal) The color instruction coloring the perimeter.
+    """
 
     selection_point_inst = None
+    """(internal) The graphics instruction representing the selection point.
+    """
 
     ready_to_finish = True
 
     is_valid = True
-
-    radius = NumericProperty(dp(10))
 
     def __init__(self, **kwargs):
         super(PaintCircle, self).__init__(**kwargs)
@@ -990,19 +1336,19 @@ class PaintCircle(PaintShape):
             *self.line_color, group=self.graphics_name)
         colors.append(inst)
 
-        self._instruction_group.add(inst)
+        self.instruction_group.add(inst)
         inst = self.perim_ellipse_inst = Line(
-            circle=(x, y, r), width=self.line_width,
+            circle=(x, y, r), width=dp(self.line_width),
             group=self.graphics_name)
-        self._instruction_group.add(inst)
+        self.instruction_group.add(inst)
         inst = Color(*self.selection_point_color, group=self.graphics_name)
-        self._instruction_group.add(inst)
+        self.instruction_group.add(inst)
         colors.append(inst)
 
         inst = self.selection_point_inst = Point(
-            points=[x + r, y], pointsize=self.pointsize,
+            points=[x + r, y], pointsize=dp(self.pointsize),
             group=self.graphics_name)
-        self._instruction_group.add(inst)
+        self.instruction_group.add(inst)
         return True
 
     def remove_shape_from_canvas(self):
@@ -1031,14 +1377,14 @@ class PaintCircle(PaintShape):
     def start_interaction(self, pos):
         if super(PaintCircle, self).start_interaction(pos):
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = 2 * self.pointsize
+                self.selection_point_inst.pointsize = 2 * dp(self.pointsize)
             return True
         return False
 
     def stop_interaction(self):
         if super(PaintCircle, self).stop_interaction():
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = self.pointsize
+                self.selection_point_inst.pointsize = dp(self.pointsize)
             return True
         return False
 
@@ -1053,14 +1399,14 @@ class PaintCircle(PaintShape):
 
     def lock(self):
         if super(PaintCircle, self).lock():
-            if self._instruction_group is not None:
+            if self.instruction_group is not None:
                 self.ellipse_color_inst.rgb = self.line_color_locked[:3]
             return True
         return False
 
     def unlock(self):
         if super(PaintCircle, self).unlock():
-            if self._instruction_group is not None:
+            if self.instruction_group is not None:
                 self.ellipse_color_inst.rgb = self.line_color[:3]
             return True
         return False
@@ -1068,14 +1414,14 @@ class PaintCircle(PaintShape):
     def select(self):
         if not super(PaintCircle, self).select():
             return False
-        if self._instruction_group is not None:
-            self.perim_ellipse_inst.width = 2 * self.line_width
+        if self.instruction_group is not None:
+            self.perim_ellipse_inst.width = 2 * dp(self.line_width)
         return True
 
     def deselect(self):
         if super(PaintCircle, self).deselect():
-            if self._instruction_group is not None:
-                self.perim_ellipse_inst.width = self.line_width
+            if self.instruction_group is not None:
+                self.perim_ellipse_inst.width = dp(self.line_width)
             return True
         return False
 
@@ -1111,30 +1457,75 @@ class PaintCircle(PaintShape):
 
 
 class PaintEllipse(PaintShape):
+    """A shape that represents an ellipse.
+
+    The shape has a single point by which it can be dragged or the radius
+    expanded.
+    """
 
     center = ListProperty([0, 0])
+    """A 2-tuple containing the center position of the ellipse.
+
+    This can be set, and the shape will translate itself to the new center pos.
+
+    This is read only while a user is interacting with the shape with touch,
+    or if the shape is not :attr:`finished`.
+    """
+
+    radius_x = NumericProperty(dp(10))
+    """The x-radius of the circle.
+
+    This can be set, and the shape will resize itself to the new size.
+
+    This is read only while a user is interacting with the shape with touch,
+    or if the shape is not :attr:`finished`.
+    """
+
+    radius_y = NumericProperty(dp(15))
+    """The y-radius of the circle.
+
+    This can be set, and the shape will resize itself to the new size.
+
+    This is read only while a user is interacting with the shape with touch,
+    or if the shape is not :attr:`finished`.
+    """
+
+    angle = NumericProperty(0)
+    '''The angle in radians by which the x-axis is rotated counter clockwise.
+    This allows the ellipse to be rotated rather than just be aligned to the
+    default axes.
+
+    This can be set, and the shape will reorient itself to the new size.
+
+    This is read only while a user is interacting with the shape with touch,
+    or if the shape is not :attr:`finished`.
+    '''
 
     perim_ellipse_inst = None
+    """(internal) The graphics instruction representing the perimeter.
+    """
 
     ellipse_color_inst = None
+    """(internal) The color instruction coloring the perimeter.
+    """
 
     selection_point_inst = None
+    """(internal) The graphics instruction representing the selection point
+    on the first axis.
+    """
 
     selection_point_inst2 = None
+    """(internal) The graphics instruction representing the second selection
+    point for the second axis.
+    """
 
     rotate_inst = None
+    """(internal) The graphics instruction that rotates the ellipse.
+    """
 
     ready_to_finish = True
 
     is_valid = True
-
-    radius_x = NumericProperty(dp(10))
-
-    radius_y = NumericProperty(dp(15))
-
-    angle = NumericProperty(0)
-    '''radians
-    '''
 
     def __init__(self, **kwargs):
         super(PaintEllipse, self).__init__(**kwargs)
@@ -1155,7 +1546,7 @@ class PaintEllipse(PaintShape):
             PushMatrix(group=name)
             Rotate(angle=angle / pi * 180., origin=(x, y), group=name)
             Ellipse(size=(rx * 2., ry * 2.), pos=(x - rx, y - ry), group=name)
-            PopMatrix(group=self.graphics_name)
+            PopMatrix(group=name)
 
     def add_shape_to_canvas(self, paint_widget):
         if not super(PaintEllipse, self).add_shape_to_canvas(paint_widget):
@@ -1176,21 +1567,21 @@ class PaintEllipse(PaintShape):
             angle=angle / pi * 180., origin=(x, y), group=self.graphics_name)
 
         i4 = self.perim_ellipse_inst = Line(
-            ellipse=(x - rx, y - ry, 2 * rx, 2 * ry), width=self.line_width,
-            group=self.graphics_name)
+            ellipse=(x - rx, y - ry, 2 * rx, 2 * ry),
+            width=dp(self.line_width), group=self.graphics_name)
         i6 = self.selection_point_inst2 = Point(
-            points=[x, y + ry], pointsize=self.pointsize,
+            points=[x, y + ry], pointsize=dp(self.pointsize),
             group=self.graphics_name)
         i8 = Color(*self.selection_point_color, group=self.graphics_name)
         colors.append(i8)
 
         i5 = self.selection_point_inst = Point(
-            points=[x + rx, y], pointsize=self.pointsize,
+            points=[x + rx, y], pointsize=dp(self.pointsize),
             group=self.graphics_name)
         i7 = PopMatrix(group=self.graphics_name)
 
         for inst in (i1, i2, i3, i4, i6, i8, i5, i7):
-            self._instruction_group.add(inst)
+            self.instruction_group.add(inst)
         return True
 
     def remove_shape_from_canvas(self):
@@ -1247,16 +1638,16 @@ class PaintEllipse(PaintShape):
     def start_interaction(self, pos):
         if super(PaintEllipse, self).start_interaction(pos):
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = 2 * self.pointsize
-                self.selection_point_inst2.pointsize = 2 * self.pointsize
+                self.selection_point_inst.pointsize = 2 * dp(self.pointsize)
+                self.selection_point_inst2.pointsize = 2 * dp(self.pointsize)
             return True
         return False
 
     def stop_interaction(self):
         if super(PaintEllipse, self).stop_interaction():
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = self.pointsize
-                self.selection_point_inst2.pointsize = self.pointsize
+                self.selection_point_inst.pointsize = dp(self.pointsize)
+                self.selection_point_inst2.pointsize = dp(self.pointsize)
             return True
         return False
 
@@ -1264,7 +1655,7 @@ class PaintEllipse(PaintShape):
         x1, y1 = pos
 
         x2, y2 = self.center
-        x2, y2 = rotate_pos(x2 + self.radius_x, y2, x2, y2, self.angle)
+        x2, y2 = _rotate_pos(x2 + self.radius_x, y2, x2, y2, self.angle)
         return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
 
     def get_interaction_point_dist(self, pos):
@@ -1275,24 +1666,24 @@ class PaintEllipse(PaintShape):
         x1, y1 = pos
 
         x2, y2 = self.center
-        x_, y_ = rotate_pos(x2 + self.radius_x, y2, x2, y2, self.angle)
+        x_, y_ = _rotate_pos(x2 + self.radius_x, y2, x2, y2, self.angle)
         d1 = ((x1 - x_) ** 2 + (y1 - y_) ** 2) ** 0.5
 
-        x_, y_ = rotate_pos(
+        x_, y_ = _rotate_pos(
             x2, y2 + self.radius_y, x2, y2, self.angle, base_angle=pi / 2.0)
         d2 = ((x1 - x_) ** 2 + (y1 - y_) ** 2) ** 0.5
         return d1, d2
 
     def lock(self):
         if super(PaintEllipse, self).lock():
-            if self._instruction_group is not None:
+            if self.instruction_group is not None:
                 self.ellipse_color_inst.rgb = self.line_color_locked[:3]
             return True
         return False
 
     def unlock(self):
         if super(PaintEllipse, self).unlock():
-            if self._instruction_group is not None:
+            if self.instruction_group is not None:
                 self.ellipse_color_inst.rgb = self.line_color[:3]
             return True
         return False
@@ -1300,14 +1691,14 @@ class PaintEllipse(PaintShape):
     def select(self):
         if not super(PaintEllipse, self).select():
             return False
-        if self._instruction_group is not None:
-            self.perim_ellipse_inst.width = 2 * self.line_width
+        if self.instruction_group is not None:
+            self.perim_ellipse_inst.width = 2 * dp(self.line_width)
         return True
 
     def deselect(self):
         if super(PaintEllipse, self).deselect():
-            if self._instruction_group is not None:
-                self.perim_ellipse_inst.width = self.line_width
+            if self.instruction_group is not None:
+                self.perim_ellipse_inst.width = dp(self.line_width)
             return True
         return False
 
@@ -1347,26 +1738,73 @@ class PaintEllipse(PaintShape):
 
 
 class PaintPolygon(PaintShape):
+    """A shape that represents a polygon.
+
+    Points are added to the shape one touch down at a time and to finish the
+    shape, one double clicks.
+
+    The shape has a single point by which it can be dragged. All the points
+    that make up the polygon, however, can be edited once the shape is
+    selected.
+    """
 
     points = ListProperty([])
+    """A list of points (x1, y1, x2, y2, ...) that make up the perimeter of the
+    polygon.
 
-    selection_point = []
+    There must be at least 3 points for the shape to be :attr:`is_valid`.
+    The shape auto-closes so the last point doesn't have to be the same as the
+    first.
+
+    This can be set, and the shape will properly update. However, if changed
+    manually, :attr:`selection_point` should also be changed to have a
+    corresponding point in :attr:`points`.
+
+    This is read only while a user is interacting with the shape with touch,
+    or if the shape is not :attr:`finished`.
+    """
+
+    selection_point = ListProperty([])
+    """A 2-tuple indicating the position of the selection point.
+
+    This can be set, and the shape will properly update. However, if changed
+    manually, :attr:`points` should also be changed to have a
+    corresponding point at this pos.
+
+    This is read only while a user is interacting with the shape with touch,
+    or if the shape is not :attr:`finished`.
+    """
 
     perim_line_inst = None
+    """(internal) The graphics instruction representing the perimeter.
+    """
 
     perim_points_inst = None
+    """(internal) The graphics instruction representing the perimeter points.
+    """
 
     perim_color_inst = None
+    """(internal) The color instruction coloring the perimeter.
+    """
 
     selection_point_inst = None
+    """(internal) The graphics instruction representing the selection point.
+    """
 
     perim_close_inst = None
+    """(internal) The graphics instruction representing the closing of
+    the perimeter.
+    """
 
     ready_to_finish = False
 
     is_valid = False
 
     _last_point_moved = None
+    """The index in :attr:`points` of the last perimeter point that was being
+    dragged and changed by touch. This is how we have continuity when dragging
+    a point.
+    """
 
     def __init__(self, **kwargs):
         super(PaintPolygon, self).__init__(**kwargs)
@@ -1379,6 +1817,7 @@ class PaintPolygon(PaintShape):
             self.dispatch('on_update')
 
         self.fbind('points', update)
+        self.fbind('selection_point', update)
         update()
 
     def add_area_graphics_to_canvas(self, name, canvas):
@@ -1407,17 +1846,17 @@ class PaintPolygon(PaintShape):
         colors.append(i1)
 
         i2 = self.perim_line_inst = Line(
-            points=self.points, width=self.line_width,
+            points=self.points, width=dp(self.line_width),
             close=self.finished, group=self.graphics_name)
         i3 = self.perim_points_inst = Point(
-            points=self.points, pointsize=self.pointsize,
+            points=self.points, pointsize=dp(self.pointsize),
             group=self.graphics_name)
 
         insts = [i1, i2, i3]
         if not self.finished:
             points = self.points[-2:] + self.points[:2]
             line = self.perim_close_inst = Line(
-                points=points, width=self.line_width,
+                points=points, width=dp(self.line_width),
                 close=False, group=self.graphics_name)
             line.dash_offset = 4
             line.dash_length = 4
@@ -1427,11 +1866,11 @@ class PaintPolygon(PaintShape):
         colors.append(i4)
 
         i5 = self.selection_point_inst = Point(
-            points=self.selection_point, pointsize=self.pointsize,
+            points=self.selection_point, pointsize=dp(self.pointsize),
             group=self.graphics_name)
 
         for inst in insts + [i4, i5]:
-            self._instruction_group.add(inst)
+            self.instruction_group.add(inst)
 
         return True
 
@@ -1490,16 +1929,16 @@ class PaintPolygon(PaintShape):
     def start_interaction(self, pos):
         if super(PaintPolygon, self).start_interaction(pos):
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = 2 * self.pointsize
-                self.perim_points_inst.pointsize = 2 * self.pointsize
+                self.selection_point_inst.pointsize = 2 * dp(self.pointsize)
+                self.perim_points_inst.pointsize = 2 * dp(self.pointsize)
             return True
         return False
 
     def stop_interaction(self):
         if super(PaintPolygon, self).stop_interaction():
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = self.pointsize
-                self.perim_points_inst.pointsize = self.pointsize
+                self.selection_point_inst.pointsize = dp(self.pointsize)
+                self.perim_points_inst.pointsize = dp(self.pointsize)
             return True
         return False
 
@@ -1537,7 +1976,7 @@ class PaintPolygon(PaintShape):
     def finish(self):
         if super(PaintPolygon, self).finish():
             if self.perim_close_inst is not None:
-                self._instruction_group.remove(self.perim_close_inst)
+                self.instruction_group.remove(self.perim_close_inst)
                 self.perim_close_inst = None
                 self.perim_line_inst.close = True
             return True
@@ -1545,14 +1984,14 @@ class PaintPolygon(PaintShape):
 
     def lock(self):
         if super(PaintPolygon, self).lock():
-            if self._instruction_group is not None:
+            if self.instruction_group is not None:
                 self.perim_color_inst.rgb = self.line_color_locked[:3]
             return True
         return False
 
     def unlock(self):
         if super(PaintPolygon, self).unlock():
-            if self._instruction_group is not None:
+            if self.instruction_group is not None:
                 self.perim_color_inst.rgb = self.line_color[:3]
             return True
         return False
@@ -1560,14 +1999,14 @@ class PaintPolygon(PaintShape):
     def select(self):
         if not super(PaintPolygon, self).select():
             return False
-        if self._instruction_group is not None:
-            self.perim_line_inst.width = 2 * self.line_width
+        if self.instruction_group is not None:
+            self.perim_line_inst.width = 2 * dp(self.line_width)
         return True
 
     def deselect(self):
         if super(PaintPolygon, self).deselect():
-            if self._instruction_group is not None:
-                self.perim_line_inst.width = self.line_width
+            if self.instruction_group is not None:
+                self.perim_line_inst.width = dp(self.line_width)
             return True
         return False
 
@@ -1589,6 +2028,7 @@ class PaintPolygon(PaintShape):
         self.selection_point = new_points[:2]
         self.points = new_points
 
+        self.dispatch('on_update')
         return True
 
     def get_state(self, state=None):
@@ -1614,6 +2054,14 @@ class PaintPolygon(PaintShape):
 
 
 class PaintFreeformPolygon(PaintPolygon):
+    """A shape that represents a polygon.
+
+    As opposed to :class:`PaintPolygon`, points are added to shape during the
+    first touch, while the user holds the touch down and moves the touch,
+    and the shape is finished when the user release the touch.
+
+    Otherwise, it's the same as :class:`PaintPolygon`.
+    """
 
     def handle_touch_down(self, touch, opos=None):
         if not self.finished:
@@ -1650,26 +2098,43 @@ class PaintFreeformPolygon(PaintPolygon):
 class PaintCanvasBehavior(PaintCanvasBehaviorBase):
     """Implements the :class:`PaintCanvasBehaviorBase` to be able to draw
     any of the following shapes: `'circle', 'ellipse', 'polygon', 'freeform'`.
-
-
+    They are drawn using :class:`PaintCircle`, :class:`PaintEllipse`,
+    :class:`PaintPolygon`, and :class:`PaintFreeformPolygon`, respectively.
     """
 
     draw_mode = OptionProperty('freeform', options=[
         'circle', 'ellipse', 'polygon', 'freeform', 'none'])
+    """The shape to create when a user starts drawing with a touch. It can be
+    one of ``'circle', 'ellipse', 'polygon', 'freeform', 'none'`` and it starts
+    drawing the corresponding shape in the painter widget.
+    
+    When ``'none'``, not shape will be drawn and only selection is possible.
+    """
 
     shape_cls_map = {
         'circle': PaintCircle, 'ellipse': PaintEllipse,
         'polygon': PaintPolygon, 'freeform': PaintFreeformPolygon,
         'none': None
     }
+    """Maps :attr:`draw_mode` to the actual :attr:`PaintShape` subclass to be
+    used for drawing when in this mode.
+
+    This can be overwritten to add support for drawing other, non-builtin,
+    shapes.
+    """
 
     shape_cls_name_map = {}
+    """Automatically generated mapping that maps the names of classes provided
+    in :attr:`shape_cls_map` to the actual class objects. This is used when
+    reconstructing shapes e.g. in :meth:`create_shape_from_state`, where we
+    only have the class name in ``state``.
+    """
 
     def __init__(self, **kwargs):
-        super(PaintCanvasBehavior, self).__init__(**kwargs)
         self.shape_cls_name_map = {
             cls.__name__: cls for cls in self.shape_cls_map.values()
             if cls is not None}
+        super(PaintCanvasBehavior, self).__init__(**kwargs)
         self.fbind('draw_mode', self._handle_draw_mode)
 
     def _handle_draw_mode(self, *largs):
@@ -1687,30 +2152,68 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
         return shape_cls()
 
     def create_add_shape(self, cls_name, **inst_kwargs):
+        """Creates a new shape instance and adds it the painter with
+        :meth:`~PaintCanvasBehaviorBase.add_shape`.
+
+        E.g.::
+
+        .. code-block:: python
+
+            painter.create_add_shape(
+                'polygon', points=[0, 0, 300, 0, 300, 800, 0, 800])
+
+        :param cls_name: The name of the shape class to create, e.g.
+            ``"PaintEllipse"``. It uses :attr:`shape_cls_name_map` to find the
+            class to instantiate.
+        :param inst_kwargs: Configuration options for the new shape that
+            will be passed as options to the class when it is instantiated.
+        :return: The newly created shape instance.
+        """
         shape = self.shape_cls_map[cls_name](**inst_kwargs)
         shape.set_valid()
         shape.finish()
+        if not shape.is_valid:
+            raise ValueError(
+                'Shape {} is not valid and cannot be added'.format(shape))
         self.add_shape(shape)
         shape.add_shape_to_canvas(self)
         return shape
 
     def create_shape_from_state(self, state):
+        """Recreates a shape as given by the ``state`` and adds it to
+        the painter with :meth:`~PaintCanvasBehaviorBase.add_shape`.
+
+        :param state: the state dict as returned by
+            :meth:`PaintShape.get_state`.
+        :return: The newly created shape instance.
+        """
         cls = self.shape_cls_name_map[state['cls']]
         shape = cls()
         shape.set_state(state)
         shape.set_valid()
         shape.finish()
+        if not shape.is_valid:
+            raise ValueError(
+                'Shape {} is not valid and cannot be added'.format(shape))
         self.add_shape(shape)
         return shape
 
 
 if __name__ == '__main__':
+    import random
     from kivy.uix.widget import Widget
     from kivy.app import runTouchApp
     from kivy.lang import Builder
     from kivy.uix.behaviors.focus import FocusBehavior
+    from kivy.properties import StringProperty
 
     class PainterWidget(PaintCanvasBehavior, FocusBehavior, Widget):
+
+        keyboard_keys = StringProperty('')
+
+        keys_down = set()
+
+        mouse = BooleanProperty(False)
 
         def create_shape_with_touch(self, touch):
             shape = super(PainterWidget, self).create_shape_with_touch(touch)
@@ -1724,11 +2227,50 @@ if __name__ == '__main__':
                 return True
             return False
 
+        def on_touch_down(self, touch):
+            if super(PainterWidget, self).on_touch_down(touch):
+                self.mouse = True
+                return True
+            return False
+
+        def on_touch_up(self, touch):
+            self.mouse = False
+            return super(PainterWidget, self).on_touch_up(touch)
+
+        def keyboard_on_key_down(self, window, keycode, text, modifiers):
+            res = super(PainterWidget, self).keyboard_on_key_down(
+                window, keycode, text, modifiers)
+            self.keys_down.add(keycode[1])
+            keys = sorted(self.keys_down, key=lambda x: len(x), reverse=True)
+            self.keyboard_keys = ' | '.join(keys)
+            return res
+
+        def keyboard_on_key_up(self, window, keycode):
+            res = super(PainterWidget, self).keyboard_on_key_up(
+                window, keycode)
+            self.keys_down.remove(keycode[1])
+            keys = sorted(self.keys_down, key=lambda x: len(x), reverse=True)
+            self.keyboard_keys = ' | '.join(keys)
+            return res
+
+        def add_colored_shapes_area(self):
+            with self.canvas:
+                for shape in self.shapes:
+                    color = (random.random(), random.random(),
+                             random.random(), 1.)
+                    Color(*color, group='colorful')
+                    shape.add_area_graphics_to_canvas('colorful', self.canvas)
+
 
     runTouchApp(Builder.load_string("""
 BoxLayout:
     orientation: 'vertical'
+    Label:
+        size_hint_y: None
+        height: "50dp"
+        text: "Keys: {}, Mouse: {}".format(painter.keyboard_keys, painter.mouse and 'Down' or '')
     PainterWidget:
+        id: painter
         draw_mode: mode.text or 'freeform'
         locked: lock.state == 'down'
         multiselect: multiselect.state == 'down'
@@ -1746,4 +2288,9 @@ BoxLayout:
         ToggleButton:
             id: multiselect
             text: "Multi-select"
+        ToggleButton:
+            id: multiselect
+            text: "Fill"
+            on_state: painter.add_colored_shapes_area() if self.state == \
+'down' else painter.canvas.remove_group('colorful')
     """))
