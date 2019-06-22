@@ -1,37 +1,34 @@
-kivy-garden demo flower
+kivy-garden Painter
 ========================
 
-[![Coverage Status](https://coveralls.io/repos/github/kivy-garden/flower/badge.svg?branch=master)](https://coveralls.io/github/kivy-garden/flower?branch=master)
-[![Build Status](https://travis-ci.com/kivy-garden/flower.svg?branch=master)](https://travis-ci.com/kivy-garden/flower)
+[![Coverage Status](https://coveralls.io/repos/github/kivy-garden/painter/badge.svg?branch=master)](https://coveralls.io/github/kivy-garden/painter?branch=master)
+[![Build Status](https://travis-ci.com/kivy-garden/painter.svg?branch=master)](https://travis-ci.com/kivy-garden/painter)
 
-A kivy garden flower that shows how to add flowers.
+A kivy garden flower that can paint shapes in Kivy.
 
-See https://kivy-garden.github.io/flower/ for the rendered flower docs.
+See https://kivy-garden.github.io/painter/ for the rendered painter docs.
 
 Please see the garden [instructions](https://kivy-garden.github.io) for how to use kivy garden flowers.
 
 Flower information
 -------------------
 
-A kivy garden flower demo.
+Flower for drawing shapes in Kivy.
+Please see the module documentation for more information.
 
 Install
 ---------
 
-```sh
-pip install kivy_garden.flower
-```
+See [here](https://kivy-garden.github.io/index.html#generalusageguidelines).
 
 #### Usage
 
-```py
-do_something
-```
+See the docs for examples.
 
 TODO
 -------
 
-* add your code
+*
 
 Contributing
 --------------

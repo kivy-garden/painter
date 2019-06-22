@@ -1,13 +1,13 @@
 .. _flower-api:
 
-******
-Flower
-******
+********
+Painter
+********
 
-:mod:`kivy_garden.flower`
+:mod:`kivy_garden.painter`
 =============================
 
-.. automodule:: kivy_garden.flower
+.. automodule:: kivy_garden.painter
    :members:
    :undoc-members:
    :show-inheritance:

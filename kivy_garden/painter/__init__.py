@@ -80,6 +80,8 @@ import copy
 __all__ = ('PaintCanvasBehavior', 'PaintShape', 'PaintCircle', 'PaintEllipse',
            'PaintPolygon', 'PaintFreeformPolygon', 'PaintCanvasBehaviorBase')
 
+__version__ = '0.2.0'
+
 
 def _rotate_pos(x, y, cx, cy, angle, base_angle=0.):
     """Rotates ``(x, y)`` by angle ``angle`` along a circle centered at

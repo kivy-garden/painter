@@ -1,6 +1,6 @@
 
 ####################
-  The Flower API
+  The Painter API
 ####################
 
 .. toctree::
