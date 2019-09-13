@@ -2151,15 +2151,14 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
             return None
         return shape_cls()
 
-    def create_add_shape(self, cls_name, **inst_kwargs):
-        """Creates a new shape instance and adds it the painter with
-        :meth:`~PaintCanvasBehaviorBase.add_shape`.
+    def create_shape(self, cls_name, **inst_kwargs):
+        """Creates a new shape instance from the given arguments.
 
         E.g.:
 
         .. code-block:: python
 
-            painter.create_add_shape(
+            shape = painter.create_shape(
                 'polygon', points=[0, 0, 300, 0, 300, 800, 0, 800])
 
         :param cls_name: The name of the shape class to create, e.g.
@@ -2175,6 +2174,15 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
         if not shape.is_valid:
             raise ValueError(
                 'Shape {} is not valid and cannot be added'.format(shape))
+        return shape
+
+    def create_add_shape(self, cls_name, **inst_kwargs):
+        """Creates a new shape instance and also adds it the painter with
+        :meth:`~PaintCanvasBehaviorBase.add_shape`.
+
+        It has the same parameters and return value as :meth:`create_shape`.
+        """
+        shape = self.create_shape(cls_name, **inst_kwargs)
         self.add_shape(shape)
         shape.add_shape_to_canvas(self)
         return shape
