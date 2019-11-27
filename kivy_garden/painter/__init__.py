@@ -80,7 +80,7 @@ import copy
 __all__ = ('PaintCanvasBehavior', 'PaintShape', 'PaintCircle', 'PaintEllipse',
            'PaintPolygon', 'PaintFreeformPolygon', 'PaintCanvasBehaviorBase')
 
-__version__ = '0.2.0'
+from ._version import __version__
 
 
 def _rotate_pos(x, y, cx, cy, angle, base_angle=0.):
