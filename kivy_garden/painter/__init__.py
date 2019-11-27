@@ -2107,7 +2107,7 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
     """The shape to create when a user starts drawing with a touch. It can be
     one of ``'circle', 'ellipse', 'polygon', 'freeform', 'none'`` and it starts
     drawing the corresponding shape in the painter widget.
-    
+
     When ``'none'``, not shape will be drawn and only selection is possible.
     """
 
@@ -2268,14 +2268,14 @@ if __name__ == '__main__':
                     Color(*color, group='colorful')
                     shape.add_area_graphics_to_canvas('colorful', self.canvas)
 
-
     runTouchApp(Builder.load_string("""
 BoxLayout:
     orientation: 'vertical'
     Label:
         size_hint_y: None
         height: "50dp"
-        text: "Keys: {}, Mouse: {}".format(painter.keyboard_keys, painter.mouse and 'Down' or '')
+        text: "Keys: {}, Mouse: \
+{}".format(painter.keyboard_keys, painter.mouse and 'Down' or '')
     PainterWidget:
         id: painter
         draw_mode: mode.text or 'freeform'
