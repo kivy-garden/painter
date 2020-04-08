@@ -2187,12 +2187,13 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
         shape.add_shape_to_canvas(self)
         return shape
 
-    def create_shape_from_state(self, state):
+    def create_shape_from_state(self, state, add=True):
         """Recreates a shape as given by the ``state`` and adds it to
         the painter with :meth:`~PaintCanvasBehaviorBase.add_shape`.
 
         :param state: the state dict as returned by
             :meth:`PaintShape.get_state`.
+        :param add: Whether to add to the painter.
         :return: The newly created shape instance.
         """
         cls = self.shape_cls_name_map[state['cls']]
@@ -2203,7 +2204,9 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
         if not shape.is_valid:
             raise ValueError(
                 'Shape {} is not valid and cannot be added'.format(shape))
-        self.add_shape(shape)
+
+        if add:
+            self.add_shape(shape)
         return shape
 
 
