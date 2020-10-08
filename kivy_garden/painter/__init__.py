@@ -4,7 +4,8 @@ Painter Widget
 
 This package provides a widget upon which shapes can be drawn. This supports
 drawing a :class:`PaintCircle`, :class:`PaintEllipse`, :class:`PaintPolygon`,
-and a :class:`PaintFreeformPolygon` using a :class:`PaintCanvasBehavior`.
+:class:`PaintFreeformPolygon`, and a :class:`PaintPoint` using a
+:class:`PaintCanvasBehavior`.
 :class:`PaintCanvasBehaviorBase` is the high level controller that doesn't
 know about specific shapes, only about the shape base class,
 :class:`PaintShape`. :class:`PaintCanvasBehavior` adds the specific
@@ -78,7 +79,8 @@ from kivy.event import EventDispatcher
 import copy
 
 __all__ = ('PaintCanvasBehavior', 'PaintShape', 'PaintCircle', 'PaintEllipse',
-           'PaintPolygon', 'PaintFreeformPolygon', 'PaintCanvasBehaviorBase')
+           'PaintPolygon', 'PaintFreeformPolygon', 'PaintPoint',
+           'PaintCanvasBehaviorBase')
 
 from ._version import __version__
 
@@ -2095,18 +2097,211 @@ class PaintFreeformPolygon(PaintPolygon):
         self.ready_to_finish = True
 
 
+class PaintPoint(PaintShape):
+    """A shape that represents a single point and it can be dragged by this
+    point.
+    """
+
+    position = ListProperty([0, 0])
+    """A 2-tuple containing the position of the point.
+
+    This can be set, and the shape will translate itself to the new pos.
+
+    This is read only while a user is interacting with the shape with touch,
+    or if the shape is not :attr:`finished`.
+    """
+
+    circle_inst = None
+    """(internal) The graphics instruction representing the circle around the
+    point.
+    """
+
+    color_inst = None
+    """(internal) The color instruction coloring the circle and point.
+    """
+
+    point_inst = None
+    """(internal) The graphics instruction representing the point.
+    """
+
+    ready_to_finish = True
+
+    is_valid = True
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        def update(*largs):
+            self.translate()
+        self.fbind('position', update)
+
+    @classmethod
+    def create_shape(cls, position, **inst_kwargs):
+        """Creates a new point instance from the given arguments.
+
+        E.g.:
+
+        .. code-block:: python
+
+            shape = PaintPoint.create_shape([0, 0])
+
+        :param position: The :attr:`position` of the circle.
+        :param inst_kwargs: Configuration options for the new shape that
+            will be passed as options to the class when it is instantiated.
+        :return: The newly created point instance.
+        """
+        shape = cls(position=position, **inst_kwargs)
+        shape.set_valid()
+        shape.finish()
+        if not shape.is_valid:
+            raise ValueError(
+                'Shape {} is not valid'.format(shape))
+        return shape
+
+    def add_area_graphics_to_canvas(self, name, canvas):
+        with canvas:
+            x, y = self.position
+            Ellipse(size=(1., 1.), pos=(x, y), group=name)
+
+    def add_shape_to_canvas(self, paint_widget):
+        if not super().add_shape_to_canvas(paint_widget):
+            return False
+
+        colors = self.color_instructions = []
+
+        x, y = self.position
+        inst = self.color_inst = Color(
+            *self.line_color, group=self.graphics_name)
+        colors.append(inst)
+
+        self.instruction_group.add(inst)
+        inst = self.circle_inst = Line(
+            circle=(x, y, dp(self.pointsize + 2)), width=dp(self.line_width),
+            group=self.graphics_name)
+        self.instruction_group.add(inst)
+        inst = Color(*self.selection_point_color, group=self.graphics_name)
+        self.instruction_group.add(inst)
+        colors.append(inst)
+
+        inst = self.point_inst = Point(
+            points=[x, y], pointsize=dp(self.pointsize),
+            group=self.graphics_name)
+        self.instruction_group.add(inst)
+        return True
+
+    def remove_shape_from_canvas(self):
+        if super().remove_shape_from_canvas():
+            self.circle_inst = None
+            self.color_inst = None
+            self.point_inst = None
+            return True
+        return False
+
+    def handle_touch_down(self, touch, opos=None):
+        self.position = opos or tuple(touch.pos)
+
+    def handle_touch_move(self, touch):
+        self.position = tuple(touch.pos)
+
+    def handle_touch_up(self, touch, outside=False):
+        self.position = tuple(touch.pos)
+
+    def start_interaction(self, pos):
+        if super().start_interaction(pos):
+            if self.point_inst is not None:
+                self.point_inst.pointsize = 2 * dp(self.pointsize)
+            return True
+        return False
+
+    def stop_interaction(self):
+        if super().stop_interaction():
+            if self.point_inst is not None:
+                self.point_inst.pointsize = dp(self.pointsize)
+            return True
+        return False
+
+    def get_selection_point_dist(self, pos):
+        x1, y1 = pos
+        x2, y2 = self.position
+        return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+
+    def get_interaction_point_dist(self, pos):
+        return self.get_selection_point_dist(pos)
+
+    def lock(self):
+        if super().lock():
+            if self.instruction_group is not None:
+                self.color_inst.rgb = self.line_color_locked[:3]
+            return True
+        return False
+
+    def unlock(self):
+        if super().unlock():
+            if self.instruction_group is not None:
+                self.color_inst.rgb = self.line_color[:3]
+            return True
+        return False
+
+    def select(self):
+        if not super().select():
+            return False
+        if self.instruction_group is not None:
+            self.circle_inst.width = 2 * dp(self.line_width)
+        return True
+
+    def deselect(self):
+        if super().deselect():
+            if self.instruction_group is not None:
+                self.circle_inst.width = dp(self.line_width)
+            return True
+        return False
+
+    def translate(self, dpos=None, pos=None):
+        if dpos is not None:
+            x, y = self.position
+            dx, dy = dpos
+            x += dx
+            y += dy
+        elif pos is not None:
+            x, y = pos
+        else:
+            x, y = self.position
+
+        self.position = x, y
+        if self.circle_inst is not None:
+            self.circle_inst.circle = x, y, dp(self.pointsize + 2)
+        if self.point_inst is not None:
+            self.point_inst.points = [x, y]
+
+        self.dispatch('on_update')
+        return True
+
+    def get_state(self, state=None):
+        d = super().get_state(state)
+        for k in ['position', ]:
+            d[k] = getattr(self, k)
+        return d
+
+    def rescale(self, scale):
+        pass
+
+
 class PaintCanvasBehavior(PaintCanvasBehaviorBase):
     """Implements the :class:`PaintCanvasBehaviorBase` to be able to draw
-    any of the following shapes: `'circle', 'ellipse', 'polygon', 'freeform'`.
+    any of the following shapes: `'circle', 'ellipse', 'polygon', 'freeform'`,
+    and 'point'.
     They are drawn using :class:`PaintCircle`, :class:`PaintEllipse`,
-    :class:`PaintPolygon`, and :class:`PaintFreeformPolygon`, respectively.
+    :class:`PaintPolygon`, :class:`PaintFreeformPolygon`, and
+    :class:`PaintPoint`, respectively.
+
+    This is a demo class to be used as a guide for your own usage.
     """
 
     draw_mode = OptionProperty('freeform', options=[
-        'circle', 'ellipse', 'polygon', 'freeform', 'none'])
+        'circle', 'ellipse', 'polygon', 'freeform', 'point', 'none'])
     """The shape to create when a user starts drawing with a touch. It can be
-    one of ``'circle', 'ellipse', 'polygon', 'freeform', 'none'`` and it starts
-    drawing the corresponding shape in the painter widget.
+    one of ``'circle', 'ellipse', 'polygon', 'freeform', 'point', 'none'`` and
+    it starts drawing the corresponding shape in the painter widget.
 
     When ``'none'``, not shape will be drawn and only selection is possible.
     """
@@ -2114,7 +2309,7 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
     shape_cls_map = {
         'circle': PaintCircle, 'ellipse': PaintEllipse,
         'polygon': PaintPolygon, 'freeform': PaintFreeformPolygon,
-        'none': None
+        'point': PaintPoint, 'none': None
     }
     """Maps :attr:`draw_mode` to the actual :attr:`PaintShape` subclass to be
     used for drawing when in this mode.
@@ -2290,7 +2485,7 @@ BoxLayout:
         spacing: '20dp'
         Spinner:
             id: mode
-            values: ['circle', 'ellipse', 'polygon', 'freeform', 'none']
+            values: ['circle', 'ellipse', 'polygon', 'freeform', 'point', 'none']
             text: 'freeform'
         ToggleButton:
             id: lock
