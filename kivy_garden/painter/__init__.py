@@ -64,6 +64,51 @@ Following is a simple example:
 To use it, select a paint shape, e.g. freeform and start drawing.
 Finished shapes can be dragged by their orange dot. Long clicking on any of the
 shape dots lets you edit the shape.
+
+Adding shapes
+-------------
+
+Shapes can be added by either drawing them using touch, or by manually adding
+a shape.
+
+When a shape needs to be created through the GUI,
+:class:`PaintCanvasBehaviorBase` calls
+:meth:`PaintCanvasBehaviorBase.create_shape_with_touch`, which needs to be
+implemented to create and return one of the possible shapes. See
+:class:`PaintCanvasBehavior` for an example.
+
+A shape can also be manually created using
+:meth:`PaintShape.create_shape` and passing in the parameters. E.g.:
+
+.. code-block:: python
+
+    circle = PaintCircle.create_shape([0, 0], 5)
+    ellipse = PaintEllipse.create_shape([0, 0], 5, 10, 3.14)
+    polygon = PaintPolygon.create_shape(
+        [0, 0, 300, 0, 300, 800, 0, 800], [0, 0])
+    point = PaintPoint.create_shape([0, 0])
+
+Or by reconstructing it from a state dict. E.g.:
+
+.. code-block:: python
+
+    circle = PaintCircle.create_shape([0, 0], 5)
+    state = circle.get_state()
+    new_circle = PaintCircle.create_shape_from_state(state)
+
+This only creates the shape. To add the shape to the canvas behavior do e.g.:
+
+.. code-block:: python
+
+    painter = PaintCanvasBehavior()
+    circle = PaintCircle.create_shape([0, 0], 5)
+    painter.add_shape(circle)
+    circle.add_shape_to_canvas(painter)
+
+:meth:`PaintShape.add_shape_to_canvas` is required to display the shape in
+the painter widget and it adds the graphic components to the painter's canvas.
+But it can be skipped if the painter is used only as
+a controller and there's no GUI active in which to display the shapes.
 """
 from functools import partial
 from math import cos, sin, atan2, pi
@@ -1181,6 +1226,41 @@ class PaintShape(EventDispatcher):
         self.paint_widget.canvas.add(self.instruction_group)
         return True
 
+    @classmethod
+    def create_shape(cls, **inst_kwargs):
+        """Creates a new shape instance of this class from the given arguments.
+
+        See each subclass for the shape arguments.
+
+        E.g.:
+
+        .. code-block:: python
+
+            shape = PaintPolygon.create_shape(
+                [0, 0, 300, 0, 300, 800, 0, 800], [0, 0])
+
+        :param inst_kwargs: Configuration options for the new shape that
+            will be passed as options to the class when it is instantiated.
+        :return: The newly created shape instance.
+        """
+        raise NotImplementedError
+
+    @classmethod
+    def create_shape_from_state(cls, state):
+        """Recreates a shape of this class using the ``state``.
+
+        :param state: the state dict as returned by :meth:`get_state`.
+        :return: The newly created shape instance.
+        """
+        shape = cls()
+        shape.set_state(state)
+        shape.set_valid()
+        shape.finish()
+        if not shape.is_valid:
+            raise ValueError('Shape {} is not valid'.format(shape))
+
+        return shape
+
     def get_state(self, state=None):
         """Returns a configuration dictionary that can be used to duplicate
         the shape with all the configuration values of the shape. See
@@ -1319,6 +1399,30 @@ class PaintCircle(PaintShape):
             self.translate()
         self.fbind('radius', update)
         self.fbind('center', update)
+
+    @classmethod
+    def create_shape(cls, center, radius, **inst_kwargs):
+        """Creates a new circle instance from the given arguments.
+
+        E.g.:
+
+        .. code-block:: python
+
+            shape = PaintCircle.create_shape([0, 0], 5)
+
+        :param center: The :attr:`center` of the circle.
+        :param radius: The :attr:`radius` of the circle.
+        :param inst_kwargs: Configuration options for the new shape that
+            will be passed as options to the class when it is instantiated.
+        :return: The newly created circle instance.
+        """
+        shape = cls(center=center, radius=radius, **inst_kwargs)
+        shape.set_valid()
+        shape.finish()
+        if not shape.is_valid:
+            raise ValueError(
+                'Shape {} is not valid'.format(shape))
+        return shape
 
     def add_area_graphics_to_canvas(self, name, canvas):
         with canvas:
@@ -1538,6 +1642,34 @@ class PaintEllipse(PaintShape):
         self.fbind('radius_y', update)
         self.fbind('angle', update)
         self.fbind('center', update)
+
+    @classmethod
+    def create_shape(cls, center, radius_x, radius_y, angle, **inst_kwargs):
+        """Creates a new ellipse instance from the given arguments.
+
+        E.g.:
+
+        .. code-block:: python
+
+            shape = PaintEllipse.create_shape([0, 0], 5, 10, 0)
+
+        :param center: The :attr:`center` of the ellipse.
+        :param radius_x: The :attr:`radius_x` of the ellipse.
+        :param radius_y: The :attr:`radius_y` of the ellipse.
+        :param angle: The :attr:`angle` of the ellipse in radians.
+        :param inst_kwargs: Configuration options for the new shape that
+            will be passed as options to the class when it is instantiated.
+        :return: The newly created ellipse instance.
+        """
+        shape = cls(
+            center=center, radius_x=radius_x, radius_y=radius_y, angle=angle,
+            **inst_kwargs)
+        shape.set_valid()
+        shape.finish()
+        if not shape.is_valid:
+            raise ValueError(
+                'Shape {} is not valid'.format(shape))
+        return shape
 
     def add_area_graphics_to_canvas(self, name, canvas):
         with canvas:
@@ -1770,8 +1902,8 @@ class PaintPolygon(PaintShape):
     """A 2-tuple indicating the position of the selection point.
 
     This can be set, and the shape will properly update. However, if changed
-    manually, :attr:`points` should also be changed to have a
-    corresponding point at this pos.
+    manually, :attr:`points` should contain a corresponding point at this pos
+    by which it is selected.
 
     This is read only while a user is interacting with the shape with touch,
     or if the shape is not :attr:`finished`.
@@ -1821,6 +1953,32 @@ class PaintPolygon(PaintShape):
         self.fbind('points', update)
         self.fbind('selection_point', update)
         update()
+
+    @classmethod
+    def create_shape(cls, points, selection_point, **inst_kwargs):
+        """Creates a new polygon instance from the given arguments.
+
+        E.g.:
+
+        .. code-block:: python
+
+            shape = PaintPolygon.create_shape(
+                [0, 0, 300, 0, 300, 800, 0, 800], [0, 0])
+
+        :param points: The list of :attr:`points` of the polygon.
+        :param selection_point: The :attr:`selection_point` of the polygon.
+        :param inst_kwargs: Configuration options for the new shape that
+            will be passed as options to the class when it is instantiated.
+        :return: The newly created polygon instance.
+        """
+        shape = cls(
+            points=points, selection_point=selection_point, **inst_kwargs)
+        shape.set_valid()
+        shape.finish()
+        if not shape.is_valid:
+            raise ValueError(
+                'Shape {} is not valid'.format(shape))
+        return shape
 
     def add_area_graphics_to_canvas(self, name, canvas):
         with canvas:
@@ -2356,6 +2514,9 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
             shape = painter.create_shape(
                 'polygon', points=[0, 0, 300, 0, 300, 800, 0, 800])
 
+        It is the same as using :meth:`PaintShape.create_shape` on the
+        shape class.
+
         :param cls_name: The name of the shape class to create, e.g.
             ``"ellipse"``. It uses :attr:`shape_cls_map` to find the
             class to instantiate.
@@ -2363,13 +2524,7 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
             will be passed as options to the class when it is instantiated.
         :return: The newly created shape instance.
         """
-        shape = self.shape_cls_map[cls_name](**inst_kwargs)
-        shape.set_valid()
-        shape.finish()
-        if not shape.is_valid:
-            raise ValueError(
-                'Shape {} is not valid and cannot be added'.format(shape))
-        return shape
+        return self.shape_cls_map[cls_name].create_shape(**inst_kwargs)
 
     def create_add_shape(self, cls_name, **inst_kwargs):
         """Creates a new shape instance and also adds it the painter with
@@ -2392,13 +2547,7 @@ class PaintCanvasBehavior(PaintCanvasBehaviorBase):
         :return: The newly created shape instance.
         """
         cls = self.shape_cls_name_map[state['cls']]
-        shape = cls()
-        shape.set_state(state)
-        shape.set_valid()
-        shape.finish()
-        if not shape.is_valid:
-            raise ValueError(
-                'Shape {} is not valid and cannot be added'.format(shape))
+        shape = cls.create_shape_from_state(state)
 
         if add:
             self.add_shape(shape)
