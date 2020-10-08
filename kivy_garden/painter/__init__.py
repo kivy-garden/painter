@@ -82,7 +82,7 @@ __all__ = ('PaintCanvasBehavior', 'PaintShape', 'PaintCircle', 'PaintEllipse',
            'PaintPolygon', 'PaintFreeformPolygon', 'PaintPoint',
            'PaintCanvasBehaviorBase')
 
-from ._version import __version__
+from kivy_garden.painter._version import __version__
 
 
 def _rotate_pos(x, y, cx, cy, angle, base_angle=0.):
