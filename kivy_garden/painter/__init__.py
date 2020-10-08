@@ -1401,7 +1401,7 @@ class PaintCircle(PaintShape):
         self.fbind('center', update)
 
     @classmethod
-    def create_shape(cls, center, radius, **inst_kwargs):
+    def create_shape(cls, center=(0, 0), radius=dp(10), **inst_kwargs):
         """Creates a new circle instance from the given arguments.
 
         E.g.:
@@ -1644,7 +1644,9 @@ class PaintEllipse(PaintShape):
         self.fbind('center', update)
 
     @classmethod
-    def create_shape(cls, center, radius_x, radius_y, angle, **inst_kwargs):
+    def create_shape(
+            cls, center=(0, 0), radius_x=dp(10), radius_y=dp(15), angle=0,
+            **inst_kwargs):
         """Creates a new ellipse instance from the given arguments.
 
         E.g.:
@@ -1955,7 +1957,7 @@ class PaintPolygon(PaintShape):
         update()
 
     @classmethod
-    def create_shape(cls, points, selection_point, **inst_kwargs):
+    def create_shape(cls, points=(), selection_point=(), **inst_kwargs):
         """Creates a new polygon instance from the given arguments.
 
         E.g.:
@@ -1971,6 +1973,9 @@ class PaintPolygon(PaintShape):
             will be passed as options to the class when it is instantiated.
         :return: The newly created polygon instance.
         """
+        if not selection_point:
+            selection_point = points[:2]
+
         shape = cls(
             points=points, selection_point=selection_point, **inst_kwargs)
         shape.set_valid()
@@ -2294,7 +2299,7 @@ class PaintPoint(PaintShape):
         self.fbind('position', update)
 
     @classmethod
-    def create_shape(cls, position, **inst_kwargs):
+    def create_shape(cls, position=(0, 0), **inst_kwargs):
         """Creates a new point instance from the given arguments.
 
         E.g.:
@@ -2634,7 +2639,8 @@ BoxLayout:
         spacing: '20dp'
         Spinner:
             id: mode
-            values: ['circle', 'ellipse', 'polygon', 'freeform', 'point', 'none']
+            values: ['circle', 'ellipse', 'polygon', 'freeform', 'point', \
+'none']
             text: 'freeform'
         ToggleButton:
             id: lock
