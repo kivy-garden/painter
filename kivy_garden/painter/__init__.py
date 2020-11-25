@@ -708,14 +708,16 @@ class PaintCanvasBehaviorBase(EventDispatcher):
             self._long_touch_trigger = None
 
         touch.ungrab(self)
+        # don't process the same touch up again
+        paint_interaction = ud['paint_interaction']
+        ud['paint_interaction'] = 'done'
 
         self._processing_touch = None
-        if ud['paint_interaction'] == 'done':
+        if paint_interaction == 'done':
             return True
 
-        if not ud['paint_interaction']:
+        if not paint_interaction:
             if ud['paint_cleared_selection'] or self.clear_selected_shapes():
-                ud['paint_interaction'] = 'done'
                 return True
 
             # finally try creating a new shape
@@ -726,31 +728,27 @@ class PaintCanvasBehaviorBase(EventDispatcher):
                 self.current_shape = shape
                 if self.check_new_shape_done(shape, 'down'):
                     self.finish_current_shape()
-                    ud['paint_interaction'] = 'done'
                     return True
 
-                ud['paint_interaction'] = 'current_new'
+                paint_interaction = 'current_new'
             else:
-                ud['paint_interaction'] = 'done'
                 return True
 
-        if ud['paint_interaction'] in ('current', 'current_new'):
+        if paint_interaction in ('current', 'current_new'):
             if self.current_shape is not None:
                 self.current_shape.handle_touch_up(
                     touch, outside=not self.collide_point(touch.x, touch.y))
                 if self.check_new_shape_done(self.current_shape, 'up'):
                     self.finish_current_shape()
-                    ud['paint_interaction'] = 'done'
             return True
 
         if not self.collide_point(touch.x, touch.y):
-            ud['paint_interaction'] = 'done'
             return True
 
-        assert ud['paint_interaction'] == 'selected'
+        assert paint_interaction == 'selected'
         if ud['paint_touch_moved']:
             # moving normally doesn't change the selection state
-            ud['paint_interaction'] = 'done'
+
             # this is a quick selection mode where someone dragged a object but
             # nothing was selected so don't keep the object that was dragged
             # selected
@@ -762,7 +760,6 @@ class PaintCanvasBehaviorBase(EventDispatcher):
 
         shape = ud['paint_selected_shape']
         if shape not in self.shapes:
-            ud['paint_interaction'] = 'done'
             return True
 
         if self._ctrl_down or self.multiselect:
