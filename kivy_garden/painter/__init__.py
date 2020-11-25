@@ -112,6 +112,7 @@ a controller and there's no GUI active in which to display the shapes.
 """
 from functools import partial
 from math import cos, sin, atan2, pi
+from typing import List, Optional
 
 from kivy.clock import Clock
 from kivy.metrics import dp
@@ -180,42 +181,42 @@ class PaintCanvasBehaviorBase(EventDispatcher):
     if the mouse moves.
     '''
 
-    shapes = ListProperty([])
+    shapes: List['PaintShape'] = ListProperty([])
     """A list of :class:`PaintShape` instances currently added to the painting
     widget.
     """
 
-    selected_shapes = ListProperty([])
+    selected_shapes: List['PaintShape'] = ListProperty([])
     """A list of :class:`PaintShape` instances currently selected in the
     painting widget.
     """
 
-    current_shape = None
+    current_shape: Optional['PaintShape'] = None
     '''Holds shape currently being edited. Can be a finished shape, e.g. if
     a point is selected.
 
     Read only.
     '''
 
-    locked = BooleanProperty(False)
+    locked: bool = BooleanProperty(False)
     '''It locks all added shapes so they cannot be interacted with.
 
     Setting it to `True` will finish any shapes being drawn and unselect them.
     '''
 
-    multiselect = BooleanProperty(False)
+    multiselect: bool = BooleanProperty(False)
     """Whether multiple shapes can be selected by holding down control.
 
     Holding down the control key has the same effect as :attr:`multiselect`
     being True.
     """
 
-    min_touch_dist = 10
+    min_touch_dist: float = 10
     """Min distance of a touch to point for it to count as close enough to be
     able to select that point. It's in :func:`kivy.metrics.dp` units.
     """
 
-    long_touch_delay = .7
+    long_touch_delay: float = .7
     """Minimum delay after a touch down before a touch up, for the touch to
     be considered a long touch.
     """
@@ -856,11 +857,11 @@ class PaintShape(EventDispatcher):
             translated etc. This is only dispatched once the shape is finished.
     """
 
-    line_width = 1
+    line_width = NumericProperty('1dp')
     """The line width of lines shown, in :func:`~kivy.metrics.dp`.
     """
 
-    pointsize = 3
+    pointsize = NumericProperty('3dp')
     """The point size of points shown, in :func:`~kivy.metrics.dp`.
     """
 
@@ -954,17 +955,24 @@ class PaintShape(EventDispatcher):
 
     def __init__(
             self, line_color=(0, 1, 0, 1),
-            line_width=1, line_color_locked=(.4, .56, .36, 1),
-            pointsize=2, selection_point_color=(1, .5, .31, 1), **kwargs):
+            line_color_locked=(.4, .56, .36, 1),
+            selection_point_color=(1, .5, .31, 1), **kwargs):
         self.graphics_name = '{}-{}'.format(self.__class__.__name__, id(self))
 
         super(PaintShape, self).__init__(**kwargs)
-        self.pointsize = pointsize
         self.line_color = line_color
         self.line_color_locked = line_color_locked
-        self.line_width = line_width
         self.selection_point_color = selection_point_color
         self.color_instructions = []
+
+        self.fbind('line_width', self._update_from_line_width)
+        self.fbind('pointsize', self._update_from_pointsize)
+
+    def _update_from_line_width(self, *args):
+        pass
+
+    def _update_from_pointsize(self, *args):
+        pass
 
     def on_update(self, *largs):
         pass
@@ -1441,7 +1449,7 @@ class PaintCircle(PaintShape):
 
         self.instruction_group.add(inst)
         inst = self.perim_ellipse_inst = Line(
-            circle=(x, y, r), width=dp(self.line_width),
+            circle=(x, y, r), width=self.line_width,
             group=self.graphics_name)
         self.instruction_group.add(inst)
         inst = Color(*self.selection_point_color, group=self.graphics_name)
@@ -1449,7 +1457,7 @@ class PaintCircle(PaintShape):
         colors.append(inst)
 
         inst = self.selection_point_inst = Point(
-            points=[x + r, y], pointsize=dp(self.pointsize),
+            points=[x + r, y], pointsize=self.pointsize,
             group=self.graphics_name)
         self.instruction_group.add(inst)
         return True
@@ -1461,6 +1469,18 @@ class PaintCircle(PaintShape):
             self.selection_point_inst = None
             return True
         return False
+
+    def _update_from_line_width(self, *args):
+        super()._update_from_line_width()
+        if self.perim_ellipse_inst is not None:
+            w = 2 if self.selected else 1
+            self.perim_ellipse_inst.width = w * self.line_width
+
+    def _update_from_pointsize(self, *args):
+        super()._update_from_pointsize()
+        if self.selection_point_inst is not None:
+            w = 2 if self.interacting else 1
+            self.selection_point_inst.pointsize = w * self.pointsize
 
     def handle_touch_down(self, touch, opos=None):
         if not self.finished:
@@ -1480,14 +1500,14 @@ class PaintCircle(PaintShape):
     def start_interaction(self, pos):
         if super(PaintCircle, self).start_interaction(pos):
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = 2 * dp(self.pointsize)
+                self.selection_point_inst.pointsize = 2 * self.pointsize
             return True
         return False
 
     def stop_interaction(self):
         if super(PaintCircle, self).stop_interaction():
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = dp(self.pointsize)
+                self.selection_point_inst.pointsize = self.pointsize
             return True
         return False
 
@@ -1518,13 +1538,13 @@ class PaintCircle(PaintShape):
         if not super(PaintCircle, self).select():
             return False
         if self.instruction_group is not None:
-            self.perim_ellipse_inst.width = 2 * dp(self.line_width)
+            self.perim_ellipse_inst.width = 2 * self.line_width
         return True
 
     def deselect(self):
         if super(PaintCircle, self).deselect():
             if self.instruction_group is not None:
-                self.perim_ellipse_inst.width = dp(self.line_width)
+                self.perim_ellipse_inst.width = self.line_width
             return True
         return False
 
@@ -1701,15 +1721,15 @@ class PaintEllipse(PaintShape):
 
         i4 = self.perim_ellipse_inst = Line(
             ellipse=(x - rx, y - ry, 2 * rx, 2 * ry),
-            width=dp(self.line_width), group=self.graphics_name)
+            width=self.line_width, group=self.graphics_name)
         i6 = self.selection_point_inst2 = Point(
-            points=[x, y + ry], pointsize=dp(self.pointsize),
+            points=[x, y + ry], pointsize=self.pointsize,
             group=self.graphics_name)
         i8 = Color(*self.selection_point_color, group=self.graphics_name)
         colors.append(i8)
 
         i5 = self.selection_point_inst = Point(
-            points=[x + rx, y], pointsize=dp(self.pointsize),
+            points=[x + rx, y], pointsize=self.pointsize,
             group=self.graphics_name)
         i7 = PopMatrix(group=self.graphics_name)
 
@@ -1726,6 +1746,19 @@ class PaintEllipse(PaintShape):
             self.rotate_inst = None
             return True
         return False
+
+    def _update_from_line_width(self, *args):
+        super()._update_from_line_width()
+        if self.perim_ellipse_inst is not None:
+            w = 2 if self.selected else 1
+            self.perim_ellipse_inst.width = w * self.line_width
+
+    def _update_from_pointsize(self, *args):
+        super()._update_from_pointsize()
+        if self.selection_point_inst is not None:
+            w = 2 if self.interacting else 1
+            self.selection_point_inst.pointsize = w * self.pointsize
+            self.selection_point_inst2.pointsize = w * self.pointsize
 
     def handle_touch_down(self, touch, opos=None):
         if not self.finished:
@@ -1771,16 +1804,16 @@ class PaintEllipse(PaintShape):
     def start_interaction(self, pos):
         if super(PaintEllipse, self).start_interaction(pos):
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = 2 * dp(self.pointsize)
-                self.selection_point_inst2.pointsize = 2 * dp(self.pointsize)
+                self.selection_point_inst.pointsize = 2 * self.pointsize
+                self.selection_point_inst2.pointsize = 2 * self.pointsize
             return True
         return False
 
     def stop_interaction(self):
         if super(PaintEllipse, self).stop_interaction():
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = dp(self.pointsize)
-                self.selection_point_inst2.pointsize = dp(self.pointsize)
+                self.selection_point_inst.pointsize = self.pointsize
+                self.selection_point_inst2.pointsize = self.pointsize
             return True
         return False
 
@@ -1825,13 +1858,13 @@ class PaintEllipse(PaintShape):
         if not super(PaintEllipse, self).select():
             return False
         if self.instruction_group is not None:
-            self.perim_ellipse_inst.width = 2 * dp(self.line_width)
+            self.perim_ellipse_inst.width = 2 * self.line_width
         return True
 
     def deselect(self):
         if super(PaintEllipse, self).deselect():
             if self.instruction_group is not None:
-                self.perim_ellipse_inst.width = dp(self.line_width)
+                self.perim_ellipse_inst.width = self.line_width
             return True
         return False
 
@@ -2008,17 +2041,17 @@ class PaintPolygon(PaintShape):
         colors.append(i1)
 
         i2 = self.perim_line_inst = Line(
-            points=self.points, width=dp(self.line_width),
+            points=self.points, width=self.line_width,
             close=self.finished, group=self.graphics_name)
         i3 = self.perim_points_inst = Point(
-            points=self.points, pointsize=dp(self.pointsize),
+            points=self.points, pointsize=self.pointsize,
             group=self.graphics_name)
 
         insts = [i1, i2, i3]
         if not self.finished:
             points = self.points[-2:] + self.points[:2]
             line = self.perim_close_inst = Line(
-                points=points, width=dp(self.line_width),
+                points=points, width=self.line_width,
                 close=False, group=self.graphics_name)
             line.dash_offset = 4
             line.dash_length = 4
@@ -2028,7 +2061,7 @@ class PaintPolygon(PaintShape):
         colors.append(i4)
 
         i5 = self.selection_point_inst = Point(
-            points=self.selection_point, pointsize=dp(self.pointsize),
+            points=self.selection_point, pointsize=self.pointsize,
             group=self.graphics_name)
 
         for inst in insts + [i4, i5]:
@@ -2045,6 +2078,22 @@ class PaintPolygon(PaintShape):
             self.perim_close_inst = None
             return True
         return False
+
+    def _update_from_line_width(self, *args):
+        super()._update_from_line_width()
+        w = 2 if self.selected else 1
+
+        if self.perim_line_inst is not None:
+            self.perim_line_inst.width = w * self.line_width
+        if self.perim_close_inst is not None:
+            self.perim_close_inst.width = w * self.line_width
+
+    def _update_from_pointsize(self, *args):
+        super()._update_from_pointsize()
+        if self.perim_points_inst is not None:
+            w = 2 if self.interacting else 1
+            self.perim_points_inst.pointsize = w * self.pointsize
+            self.selection_point_inst.pointsize = w * self.pointsize
 
     def set_valid(self):
         self.is_valid = len(self.points) >= 6
@@ -2091,16 +2140,16 @@ class PaintPolygon(PaintShape):
     def start_interaction(self, pos):
         if super(PaintPolygon, self).start_interaction(pos):
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = 2 * dp(self.pointsize)
-                self.perim_points_inst.pointsize = 2 * dp(self.pointsize)
+                self.selection_point_inst.pointsize = 2 * self.pointsize
+                self.perim_points_inst.pointsize = 2 * self.pointsize
             return True
         return False
 
     def stop_interaction(self):
         if super(PaintPolygon, self).stop_interaction():
             if self.selection_point_inst is not None:
-                self.selection_point_inst.pointsize = dp(self.pointsize)
-                self.perim_points_inst.pointsize = dp(self.pointsize)
+                self.selection_point_inst.pointsize = self.pointsize
+                self.perim_points_inst.pointsize = self.pointsize
             return True
         return False
 
@@ -2162,13 +2211,14 @@ class PaintPolygon(PaintShape):
         if not super(PaintPolygon, self).select():
             return False
         if self.instruction_group is not None:
-            self.perim_line_inst.width = 2 * dp(self.line_width)
+            # perim_close_inst cannot be ON if we're selecting
+            self.perim_line_inst.width = 2 * self.line_width
         return True
 
     def deselect(self):
         if super(PaintPolygon, self).deselect():
             if self.instruction_group is not None:
-                self.perim_line_inst.width = dp(self.line_width)
+                self.perim_line_inst.width = self.line_width
             return True
         return False
 
@@ -2336,7 +2386,7 @@ class PaintPoint(PaintShape):
 
         self.instruction_group.add(inst)
         inst = self.circle_inst = Line(
-            circle=(x, y, dp(self.pointsize + 2)), width=dp(self.line_width),
+            circle=(x, y, self.pointsize + dp(2)), width=self.line_width,
             group=self.graphics_name)
         self.instruction_group.add(inst)
         inst = Color(*self.selection_point_color, group=self.graphics_name)
@@ -2344,7 +2394,7 @@ class PaintPoint(PaintShape):
         colors.append(inst)
 
         inst = self.point_inst = Point(
-            points=[x, y], pointsize=dp(self.pointsize),
+            points=[x, y], pointsize=self.pointsize,
             group=self.graphics_name)
         self.instruction_group.add(inst)
         return True
@@ -2356,6 +2406,23 @@ class PaintPoint(PaintShape):
             self.point_inst = None
             return True
         return False
+
+    def _update_from_line_width(self, *args):
+        super()._update_from_line_width()
+        w = 2 if self.selected else 1
+
+        if self.circle_inst is not None:
+            self.circle_inst.width = w * self.line_width
+
+    def _update_from_pointsize(self, *args):
+        super()._update_from_pointsize()
+        if self.point_inst is not None:
+            w = 2 if self.interacting else 1
+            self.point_inst.pointsize = w * self.pointsize
+
+        if self.circle_inst is not None:
+            x, y = self.position
+            self.circle_inst.circle = x, y, self.pointsize + dp(2)
 
     def handle_touch_down(self, touch, opos=None):
         self.position = opos or tuple(touch.pos)
@@ -2369,14 +2436,14 @@ class PaintPoint(PaintShape):
     def start_interaction(self, pos):
         if super().start_interaction(pos):
             if self.point_inst is not None:
-                self.point_inst.pointsize = 2 * dp(self.pointsize)
+                self.point_inst.pointsize = 2 * self.pointsize
             return True
         return False
 
     def stop_interaction(self):
         if super().stop_interaction():
             if self.point_inst is not None:
-                self.point_inst.pointsize = dp(self.pointsize)
+                self.point_inst.pointsize = self.pointsize
             return True
         return False
 
@@ -2406,13 +2473,13 @@ class PaintPoint(PaintShape):
         if not super().select():
             return False
         if self.instruction_group is not None:
-            self.circle_inst.width = 2 * dp(self.line_width)
+            self.circle_inst.width = 2 * self.line_width
         return True
 
     def deselect(self):
         if super().deselect():
             if self.instruction_group is not None:
-                self.circle_inst.width = dp(self.line_width)
+                self.circle_inst.width = self.line_width
             return True
         return False
 
@@ -2429,7 +2496,7 @@ class PaintPoint(PaintShape):
 
         self.position = x, y
         if self.circle_inst is not None:
-            self.circle_inst.circle = x, y, dp(self.pointsize + 2)
+            self.circle_inst.circle = x, y, self.pointsize + dp(2)
         if self.point_inst is not None:
             self.point_inst.points = [x, y]
 
@@ -2617,6 +2684,11 @@ if __name__ == '__main__':
                     Color(*color, group='colorful')
                     shape.add_area_graphics_to_canvas('colorful', self.canvas)
 
+        def set_shape_size(self, scale):
+            for shape in self.shapes:
+                shape.line_width = dp(1) * scale
+                shape.pointsize = dp(3) * scale
+
     runTouchApp(Builder.load_string("""
 BoxLayout:
     orientation: 'vertical'
@@ -2649,4 +2721,17 @@ BoxLayout:
             text: "Fill"
             on_state: painter.add_colored_shapes_area() if self.state == \
 'down' else painter.canvas.remove_group('colorful')
+    BoxLayout:
+        size_hint_y: None
+        height: "50dp"
+        spacing: '20dp'
+        Label:
+            size_hint_x: None
+            width: self.texture_size[0]
+            text: "Size: "
+        Slider:
+            min: 1
+            max: 10
+            value: 1
+            on_value: painter.set_shape_size(self.value)
     """))
